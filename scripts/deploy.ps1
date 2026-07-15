@@ -82,6 +82,7 @@ $CaKey = Join-Path $SecretsDirectory 'windows-llm-manager-ca.key'
 $CosignPrefix = Join-Path $SecretsDirectory 'cosign'
 $CosignKey = "$CosignPrefix.key"
 $CosignPub = "$CosignPrefix.pub"
+$RequiredCosignVersion = 'v3.1.1'
 
 function Invoke-Native {
     param([Parameter(Mandatory = $true)][string]$FilePath, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -98,13 +99,18 @@ function Protect-SecretsDirectory {
 }
 
 function Find-OrInstallCosign {
-    $existing = Get-Command cosign.exe -ErrorAction SilentlyContinue
-    if ($existing) { return $existing.Source }
     $local = Join-Path $Tools 'cosign.exe'
-    if (Test-Path -LiteralPath $local) { return $local }
+    if (Test-Path -LiteralPath $local) {
+        try {
+            $installedVersion = (& $local version --json | ConvertFrom-Json).gitVersion
+            if ($LASTEXITCODE -eq 0 -and $installedVersion -eq $RequiredCosignVersion) { return $local }
+        } catch {
+            Write-Warning "The cached cosign executable could not be identified and will be replaced."
+        }
+    }
 
-    Write-Host 'Cosign was not found; downloading the official Windows release and verifying its published SHA-256 checksum.'
-    $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/sigstore/cosign/releases/latest' -Headers @{ 'User-Agent' = 'WindowsLLMManager-Deploy' }
+    Write-Host "Downloading cosign $RequiredCosignVersion and verifying its published SHA-256 checksum."
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/sigstore/cosign/releases/tags/$RequiredCosignVersion" -Headers @{ 'User-Agent' = 'WindowsLLMManager-Deploy' }
     $binaryAsset = $release.assets | Where-Object name -eq 'cosign-windows-amd64.exe' | Select-Object -First 1
     $checksumAsset = $release.assets | Where-Object name -Match '^cosign.*checksums\.txt$' | Select-Object -First 1
     if (-not $binaryAsset -or -not $checksumAsset) { throw 'The current cosign release does not contain the expected Windows binary/checksum assets.' }
@@ -261,7 +267,11 @@ $ReleaseAgent = Join-Path $ReleaseDir 'agent.exe'
 Copy-Item -LiteralPath $AgentExe -Destination $ReleaseAgent
 $hash = (Get-FileHash -LiteralPath $ReleaseAgent -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$ReleaseAgent.sha256" -Value "$hash  agent.exe" -Encoding ASCII
-Invoke-Native -FilePath $Cosign -Arguments @('sign-blob', '--yes', '--key', $CosignKey, '--output-signature', "$ReleaseAgent.sig", $ReleaseAgent)
+Invoke-Native -FilePath $Cosign -Arguments @(
+    'sign-blob', '--yes', '--key', $CosignKey,
+    '--use-signing-config=false', '--new-bundle-format=false', '--tlog-upload=false',
+    '--output-signature', "$ReleaseAgent.sig", $ReleaseAgent
+)
 
 if ($Publish) {
     Invoke-Native -FilePath $Gh -Arguments @('auth', 'status', '--hostname', 'github.com')

@@ -27,6 +27,8 @@ Use `scripts/ps_session.ps1` when later steps genuinely depend on variables, fun
 
 Use `scripts/verify.ps1` for read-only postcondition checks so verification remains visibly distinct from mutation.
 
+Keep the three time settings distinct. Synchronous `/exec` and session calls default to 120 seconds; asynchronous jobs default to a 7200-second process limit; `update_check_interval_min` from `/health` is the agent's update polling interval in minutes and is not an API or command timeout. Agent 0.1.2 or newer reports this health field; `0` means automatic update checks are disabled.
+
 ## Work safely
 
 Before a multi-step change, state the intended steps and explicitly flag deletion, task removal, replacement without backup, and other irreversible actions. Do not arm `POST /killswitch` unless the operator explicitly requests it.
@@ -43,6 +45,8 @@ For every host, work sequentially:
 Prefer check-then-act and repeatable operations. Verify copied files by hash or size, tasks by their action/trigger, services by configuration and state, and shortcuts/files by their exact path and expected properties.
 
 Remote PowerShell is non-interactive and console-less. Never use prompts, `Read-Host`, progress UI, cursor control, `Clear-Host`, or commands requiring a person at the console. Suppress confirmations with `-Confirm:$false` or `-Force` only when semantically safe. Avoid `Format-Table` and `Format-List` for parsed output.
+
+Never stop or restart the `WindowsLLMManager` service from PowerShell running through that same agent: the command process can be killed before it starts the service again. Never launch `updater.exe` through `/exec`, a session, or `/jobs`; it would inherit the agent-managed process tree. Let the agent-owned update timer launch it, or use an explicitly authorized local/out-of-band administrator. If remotely changing `update_check_interval_min`, write `config.json` atomically, verify the persisted value, report that it is pending, and require a local restart or reboot to apply it.
 
 ## Handle outcomes correctly
 

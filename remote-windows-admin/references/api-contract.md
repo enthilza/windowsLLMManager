@@ -124,6 +124,7 @@ Returns `204`. An unknown/reaped session returns `404 session_not_found`.
 ```
 
 Health remains available when braked and then reports `status: braked`.
+`update_check_interval_min` is reported by agent 0.1.2 or newer. It is the updater polling interval in minutes, not an HTTP or PowerShell timeout; `0` disables automatic checks. Configuration changes take effect on the next service start.
 
 ### `GET /blocklist`
 

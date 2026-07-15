@@ -1,0 +1,14 @@
+/build/
+/dist/
+*.exe
+*.bak
+*.failed-*
+*.key
+token.txt
+KILLED
+.windows-llm-manager-secrets/
+/.agents/
+/.codex/
+/AGENTS.md
+/SESSION.md
+/_info.txt

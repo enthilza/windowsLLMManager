@@ -1,0 +1,4 @@
+interface:
+  display_name: "Remote Windows Admin"
+  short_description: "Securely administer remote Windows hosts"
+  default_prompt: "Use $remote-windows-admin to inspect and administer the specified remote Windows host safely."

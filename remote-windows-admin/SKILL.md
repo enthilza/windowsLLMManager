@@ -21,7 +21,7 @@ Use `scripts/ps_admin.ps1` for health, blocklist, unblock, and explicitly instru
 
 Use `scripts/ps_exec.ps1` for independent checks or actions. Set `-Format json_object` for object-shaped output and `-Format lines` for plain text. Do not add `ConvertTo-Json`; the server applies its fixed Base64 scriptblock wrapper. If unsure, use `lines`.
 
-Use `scripts/ps_job.ps1` for operations that can approach or exceed 120 seconds, including DISM, SFC, Windows Update, MSI/EXE installers, large copies, image servicing, and lengthy scans. Submit once, retain the returned job ID, and poll that exact ID with `-Action Status`. Never submit the same mutation again while its job is `running` or `cancelling`. The default long-job limit is 7200 seconds and the server enforces its configured maximum.
+Use `scripts/ps_job.ps1` for operations that can approach or exceed 120 seconds, including DISM, SFC, Windows Update, MSI/EXE installers, large copies, image servicing, and lengthy scans. Submit once, retain the returned job ID, and poll that exact ID with `-Action Status`. Never submit the same mutation again while its job is `running` or `cancelling`. The default long-job limit is 7200 seconds and the server enforces its configured maximum. The jobs API requires agent 0.1.1 or newer; if `/jobs` is unavailable, report that the agent needs an update and do not fall back to `/exec` for a long mutation.
 
 Use `scripts/ps_session.ps1` when later steps genuinely depend on variables, functions, modules, or current directory from earlier steps. No more than five sessions may exist on a host. Always close a session in cleanup. Two exec requests for one session are serialized by the server.
 

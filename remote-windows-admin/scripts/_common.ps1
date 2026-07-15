@@ -73,19 +73,39 @@ function Get-WlmCASettings {
     return @{ Path = [IO.Path]::GetFullPath($CAPath); Fingerprint = $CAFingerprint.ToUpperInvariant() }
 }
 
+function Resolve-WlmTLSMode {
+    param(
+        [Parameter(Mandatory = $true)][uri]$BaseUrl,
+        [Parameter(Mandatory = $true)][ValidateSet('Auto','InternalCA','PublicPKI')][string]$TLSMode,
+        [string]$CAPath,
+        [string]$CAFingerprint
+    )
+    if ($TLSMode -ne 'Auto') { return $TLSMode }
+    if ($CAPath -or $CAFingerprint) { return 'InternalCA' }
+    $parsedIP = $null
+    if ([Net.IPAddress]::TryParse($BaseUrl.DnsSafeHost, [ref]$parsedIP)) { return 'InternalCA' }
+    return 'PublicPKI'
+}
+
 function New-WlmHttpClient {
     param(
         [Parameter(Mandatory = $true)][uri]$BaseUrl,
         [Parameter(Mandatory = $true)][string]$Token,
+        [ValidateSet('Auto','InternalCA','PublicPKI')][string]$TLSMode = 'Auto',
         [string]$CAPath,
         [string]$CAFingerprint
     )
     if ($BaseUrl.Scheme -ne 'https') { throw 'Windows LLM Manager requires HTTPS; plain HTTP is forbidden.' }
-    $caSettings = Get-WlmCASettings -CAPath $CAPath -CAFingerprint $CAFingerprint
     Add-Type -AssemblyName System.Net.Http
     $handler = [Net.Http.HttpClientHandler]::new()
-    $validator = [WlmPinnedCaValidator]::new($caSettings.Path, $caSettings.Fingerprint)
-    $handler.ServerCertificateCustomValidationCallback = $validator.Callback
+    $resolvedTLSMode = Resolve-WlmTLSMode -BaseUrl $BaseUrl -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint
+    if ($resolvedTLSMode -eq 'InternalCA') {
+        $caSettings = Get-WlmCASettings -CAPath $CAPath -CAFingerprint $CAFingerprint
+        $validator = [WlmPinnedCaValidator]::new($caSettings.Path, $caSettings.Fingerprint)
+        $handler.ServerCertificateCustomValidationCallback = $validator.Callback
+    } elseif ($CAPath -or $CAFingerprint) {
+        throw '-CAPath and -CAFingerprint cannot be combined with -TLSMode PublicPKI.'
+    }
     $client = [Net.Http.HttpClient]::new($handler, $true)
     $client.BaseAddress = $BaseUrl
     $client.Timeout = [TimeSpan]::FromSeconds(180)
@@ -100,10 +120,11 @@ function Invoke-WlmRequest {
         [Parameter(Mandatory = $true)][uri]$BaseUrl,
         [Parameter(Mandatory = $true)][string]$Token,
         [object]$Body,
+        [ValidateSet('Auto','InternalCA','PublicPKI')][string]$TLSMode = 'Auto',
         [string]$CAPath,
         [string]$CAFingerprint
     )
-    $client = New-WlmHttpClient -BaseUrl $BaseUrl -Token $Token -CAPath $CAPath -CAFingerprint $CAFingerprint
+    $client = New-WlmHttpClient -BaseUrl $BaseUrl -Token $Token -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint
     try {
         $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method), $Path)
         if ($null -ne $Body) {
@@ -111,7 +132,7 @@ function Invoke-WlmRequest {
             $request.Content = [Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, 'application/json')
         }
         try { $response = $client.SendAsync($request).GetAwaiter().GetResult() }
-        catch { throw "No HTTP response from agent. After prior auth errors, assume this source may be blocklisted. $($_.Exception.Message)" }
+        catch { throw "No HTTP response from agent. TLS validation, DNS, connectivity, tunnel routing, or prior blocklisting may be the cause. $($_.Exception.Message)" }
         $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         if (-not $response.IsSuccessStatusCode) {
             $code = [int]$response.StatusCode

@@ -5,7 +5,7 @@ description: Execute PowerShell commands and verified multi-step administrative 
 
 # Remote Windows Admin
 
-Use only the bundled PowerShell helpers. They enforce HTTPS, the pinned internal CA, bearer auth, bounded request handling, and consistent API errors. Never use `-SkipCertificateCheck`, a global certificate callback, or plain HTTP.
+Use only the bundled PowerShell helpers. They enforce HTTPS, strict certificate and hostname validation, bearer auth, bounded request handling, and consistent API errors. Never use `-SkipCertificateCheck`, a global certificate callback, or plain HTTP.
 
 Before acting, obtain from the operator for each host:
 
@@ -13,7 +13,13 @@ Before acting, obtain from the operator for each host:
 - bearer token;
 - intended operation and expected end state.
 
-The internal CA certificate and SHA-256 fingerprint are bundled in `references/internal-ca.pem` and `references/ca-fingerprint.txt`. Refuse to connect if they are absent, uninitialized, expired, do not match, or do not validate the server certificate and hostname. With normal Cloudflare HTTP ingress the client sees Cloudflare's edge certificate, not the agent certificate; use direct HTTPS or end-to-end TCP passthrough when this skill must validate the internal CA. On the `cloudflared` origin hop, configure `caPool` with the same CA.
+The helpers support both common TLS topologies through `-TLSMode Auto|InternalCA|PublicPKI`:
+
+- `Auto` is the default. An IP-address base URL uses `InternalCA`; a DNS-hostname base URL uses `PublicPKI`. Supplying `-CAPath` or `-CAFingerprint` also selects `InternalCA`.
+- `InternalCA` validates the agent certificate and hostname against the bundled `references/internal-ca.pem`, then requires its SHA-256 fingerprint to equal `references/ca-fingerprint.txt`. Use it for direct IP access and end-to-end TLS passthrough.
+- `PublicPKI` leaves certificate validation to the Windows trust store and requires a publicly trusted, unexpired certificate valid for the exact hostname. Use it for ordinary Cloudflare HTTP Tunnel hostnames, where the client sees the real Cloudflare edge certificate.
+
+Refuse invalid certificates in either mode. `PublicPKI` is not a certificate bypass and never accepts a self-signed edge certificate. Cloudflare's `noTLSVerify` setting applies only to the separate `cloudflared`-to-agent origin hop; prefer `caPool` with the internal CA when practical. For a direct internal-CA endpoint addressed by DNS rather than IP, explicitly pass `-TLSMode InternalCA`.
 
 Use `scripts/ps_admin.ps1` for health, blocklist, unblock, and explicitly instructed kill-switch calls. Its kill-switch action additionally requires `-ConfirmArm`.
 

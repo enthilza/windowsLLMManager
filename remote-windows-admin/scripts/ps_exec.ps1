@@ -4,9 +4,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Token,
     [Parameter(Mandatory = $true)][string]$Command,
     [Parameter(Mandatory = $true)][ValidateSet('json_object','lines')][string]$Format,
+    [ValidateSet('Auto','InternalCA','PublicPKI')][string]$TLSMode = 'Auto',
     [string]$CAPath,
     [string]$CAFingerprint
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
-Invoke-WlmRequest -Method POST -Path '/exec' -BaseUrl $BaseUrl -Token $Token -Body @{ command = $Command; format = $Format } -CAPath $CAPath -CAFingerprint $CAFingerprint
+Invoke-WlmRequest -Method POST -Path '/exec' -BaseUrl $BaseUrl -Token $Token -Body @{ command = $Command; format = $Format } -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint

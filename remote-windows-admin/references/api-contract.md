@@ -11,7 +11,7 @@
 
 ## Connection and errors
 
-All calls use `https://` and `Authorization: Bearer <token>`. Validate the server certificate chain and hostname against `internal-ca.pem`, then require the root certificate SHA-256 fingerprint to equal `ca-fingerprint.txt`. Never disable certificate validation.
+All calls use `https://` and `Authorization: Bearer <token>`. The bundled helpers default to `-TLSMode Auto`: IP-address URLs validate the server certificate chain and hostname against `internal-ca.pem` and require the root SHA-256 fingerprint from `ca-fingerprint.txt`; DNS-hostname URLs use the Windows trust store and require a publicly trusted certificate valid for that exact hostname. This supports ordinary Cloudflare HTTP Tunnel hostnames, where the client sees Cloudflare's public edge certificate rather than the agent certificate. Use `-TLSMode InternalCA` or `-TLSMode PublicPKI` to override automatic selection. Never disable certificate validation.
 
 Every error response that is not an intentionally dropped blocklisted connection has this shape:
 

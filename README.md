@@ -7,7 +7,7 @@ Windows LLM Manager is an authenticated HTTPS service for non-interactive admini
 - `deploy.cmd`: interactive host-specific provisioning package builder;
 - `release.cmd`: separate universal `agent.exe` signing and GitHub release workflow;
 - `scripts/installer.ps1`: elevated target installer used as `install.ps1` in generated packages;
-- `remote-windows-admin/`: skill and CA-validating PowerShell API helpers.
+- `remote-windows-admin/`: skill and PowerShell API helpers with pinned internal-CA and public-PKI TLS modes.
 
 The service runs as `LocalSystem` and intentionally permits arbitrary PowerShell to an authenticated operator. Treat its bearer token, signing key, CA key and leaf TLS keys as privileged credentials.
 

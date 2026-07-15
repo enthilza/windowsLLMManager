@@ -6,6 +6,7 @@ param(
     [string]$Command,
     [ValidateSet('json_object','lines')][string]$Format = 'lines',
     [ValidateRange(1, 2147483647)][int]$TimeoutSec = 7200,
+    [ValidateSet('Auto','InternalCA','PublicPKI')][string]$TLSMode = 'Auto',
     [string]$CAPath,
     [string]$CAFingerprint
 )
@@ -18,14 +19,14 @@ switch ($Action) {
             command = $Command
             format = $Format
             timeout_sec = $TimeoutSec
-        } -CAPath $CAPath -CAFingerprint $CAFingerprint
+        } -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint
     }
     'Status' {
         if ([string]::IsNullOrWhiteSpace($JobId)) { throw '-JobId is required for Status.' }
-        Invoke-WlmRequest -Method GET -Path ("/jobs/{0}" -f [uri]::EscapeDataString($JobId)) -BaseUrl $BaseUrl -Token $Token -CAPath $CAPath -CAFingerprint $CAFingerprint
+        Invoke-WlmRequest -Method GET -Path ("/jobs/{0}" -f [uri]::EscapeDataString($JobId)) -BaseUrl $BaseUrl -Token $Token -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint
     }
     'Cancel' {
         if ([string]::IsNullOrWhiteSpace($JobId)) { throw '-JobId is required for Cancel.' }
-        Invoke-WlmRequest -Method DELETE -Path ("/jobs/{0}" -f [uri]::EscapeDataString($JobId)) -BaseUrl $BaseUrl -Token $Token -CAPath $CAPath -CAFingerprint $CAFingerprint
+        Invoke-WlmRequest -Method DELETE -Path ("/jobs/{0}" -f [uri]::EscapeDataString($JobId)) -BaseUrl $BaseUrl -Token $Token -TLSMode $TLSMode -CAPath $CAPath -CAFingerprint $CAFingerprint
     }
 }

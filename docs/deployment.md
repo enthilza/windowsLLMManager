@@ -14,8 +14,8 @@ The skill connects directly to `https://host:port`, verifies hostname/SAN and re
 
 Cloudflare HTTP ingress terminates client TLS at the Cloudflare edge. An external HTTP client therefore cannot see or validate the agent's internal-CA certificate. The secure split is:
 
-- client to Cloudflare: normal public Web PKI and optional Cloudflare Access;
-- `cloudflared` to agent: internal CA verification using `caPool`, with hostname verification through `originServerName`;
+- client to Cloudflare: normal public Web PKI and optional Cloudflare Access; the skill's default `Auto` mode selects `PublicPKI` for the DNS hostname and validates the real Cloudflare edge certificate and exact hostname;
+- `cloudflared` to agent: internal CA verification using `caPool`, with the service URL IP present in the agent certificate SAN;
 - agent `trusted_proxy_ip`: the exact LAN IP of the `cloudflared` host;
 - firewall `RemoteAddress`: the same tunnel-host IP.
 
@@ -27,18 +27,16 @@ ingress:
     service: https://10.0.0.11:8443
     originRequest:
       caPool: C:\Cloudflared\windows-llm-manager-ca.crt
-      originServerName: host01.example.internal
   - hostname: host02.example.com
     service: https://10.0.0.12:8443
     originRequest:
       caPool: C:\Cloudflared\windows-llm-manager-ca.crt
-      originServerName: host02.example.internal
   - service: http_status:404
 ```
 
-The agent accepts `CF-Connecting-IP` only when the raw TCP peer exactly matches `trusted_proxy_ip`; direct LAN callers cannot spoof it.
+The service URL IP must be present in the agent certificate SAN. When that cannot be arranged, `originRequest.noTLSVerify: true` permits the self-signed/private origin certificate but disables certificate authentication only on the `cloudflared`-to-agent hop. It does not weaken the skill's public certificate and hostname validation on the client-to-Cloudflare hop.
 
-If the coding-agent skill itself must validate the internal CA over the internet, use an end-to-end TCP transport such as Cloudflare Access TCP rather than HTTP ingress. The usual HTTP tunnel cannot provide origin-certificate visibility to the end client.
+The agent accepts `CF-Connecting-IP` only when the raw TCP peer exactly matches `trusted_proxy_ip`; direct LAN callers cannot spoof it. For direct IP access the skill's `Auto` mode instead selects `InternalCA` and pins the bundled CA. A direct internal-CA endpoint addressed by DNS requires explicit `-TLSMode InternalCA`.
 
 ## Bootstrap files
 

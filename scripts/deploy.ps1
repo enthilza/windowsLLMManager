@@ -88,10 +88,10 @@ $SecretsDirectory = [IO.Path]::GetFullPath($SecretsDirectory)
 if ($SecretsDirectory.StartsWith($ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'SecretsDirectory must be outside the project repository.'
 }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $SecretsDirectory 'packages' }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $ProjectRoot 'deployPackage' }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if ($OutputDirectory.StartsWith($ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'OutputDirectory contains host TLS private keys and must be outside the project/synchronized repository.'
+    Write-Warning 'The provisioning package is inside the project. Git ignores deployPackage, but a sync client such as Nextcloud may still upload its TLS private key and packaged token.'
 }
 
 $Version = $Version.TrimStart('v')
@@ -117,9 +117,15 @@ function Invoke-Native {
 }
 
 function Protect-SecretsDirectory {
-    New-Item -ItemType Directory -Force -Path $SecretsDirectory, $Tools, $OutputDirectory | Out-Null
+    New-Item -ItemType Directory -Force -Path $SecretsDirectory, $Tools | Out-Null
     $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     Invoke-Native -FilePath icacls.exe -Arguments @($SecretsDirectory, '/inheritance:r', '/grant:r', "$account`:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F') | Out-Null
+}
+
+function Protect-OutputDirectory {
+    New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+    $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Invoke-Native -FilePath icacls.exe -Arguments @($OutputDirectory, '/inheritance:r', '/grant:r', "$account`:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F') | Out-Null
 }
 
 function Find-OrInstallCosign {
@@ -153,6 +159,7 @@ function Find-OrInstallCosign {
 }
 
 Protect-SecretsDirectory
+Protect-OutputDirectory
 $Cosign = Find-OrInstallCosign
 
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null

@@ -32,7 +32,9 @@ For the normal one-PC workflow, run this from an ordinary Windows terminal with 
 
 The script asks whether to generate a bearer token into the package and then asks for the target PC's IPv4 address. The address becomes the certificate IP SAN, so clients connect to that same IP. If no token is packaged, `install.cmd` generates it on the target. In both modes the installer displays the installed token once.
 
-The first run creates the internal CA and cosign pair outside the repository; creating the password-protected signing key adds a one-time password prompt. Every generated package receives a unique CA-signed leaf certificate and private key. Output under `<SecretsDirectory>\packages\<IP>-<version>\` contains a host-specific ZIP, `install.ps1`, and a thin `install.cmd` launcher. Staging and provisioning ZIPs never enter this repository or its Nextcloud-synchronized path.
+The first run creates the internal CA and cosign pair outside the repository; creating the password-protected signing key adds a one-time password prompt. Every generated package receives a unique CA-signed leaf certificate and private key. Output under `.\deployPackage\<IP>-<version>\` contains a host-specific ZIP, `install.ps1`, and a thin `install.cmd` launcher. The directory is ACL-restricted and excluded by `.gitignore`.
+
+The provisioning ZIP contains a leaf TLS private key and may contain a bearer token. Because this repository is stored under Nextcloud, configure the sync client to exclude `deployPackage` or remove the package immediately after transferring it to the target PC. The internal CA key, cosign key and temporary staging files always remain in the external secrets directory and never enter `deployPackage`.
 
 Advanced automation can still pass `-Version`, `-GitHubOwner`, `-GitHubRepository`, `-TargetName`, `-TargetIP`, proxy/firewall settings, or a fleet manifest to `deploy.cmd`. Ordinary package creation never creates or publishes GitHub release assets and does not unlock an existing cosign private key.
 

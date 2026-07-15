@@ -58,7 +58,7 @@ Výsledok sa uloží do:
 
 Príklad:
 
-    .\deployPackage\10.0.0.11-v0.1.1\
+    .\deployPackage\10.0.0.11-v0.1.2\
 
 V adresári bude najmä:
 
@@ -92,7 +92,7 @@ Inštalátor vytvorí:
 
     - službu WindowsLLMManager,
     - firewall pravidlo pre TCP port 8443,
-    - naplánovanú úlohu WindowsLLMManagerUpdateCheck,
+    - interný časovač aktualizácií v službe podľa config.json,
     - ACL-zamknuté súbory s tokenom a TLS privátnym kľúčom.
 
 Citlivý provisioning ZIP sa po úspešnej inštalácii automaticky odstráni.
@@ -121,13 +121,13 @@ PRÍPRAVA NOVEJ VERZIE
 
 1. Otvor súbor VERSION a nastav novú verziu, napríklad:
 
-       0.1.1
+       0.1.2
 
 2. Ulož všetky zmeny do Gitu a pushni ich na GitHub:
 
        git status --short
        git add <zmenené-súbory>
-       git commit -m "Release v0.1.1"
+       git commit -m "Release v0.1.2"
        git push origin main
 
    Release skript odmietne publikovanie, ak pracovný adresár obsahuje
@@ -183,25 +183,39 @@ Na publikovanie musí byť nainštalovaný a autorizovaný GitHub CLI:
 3. AUTOMATICKÁ AKTUALIZÁCIA KLIENTOV
 ====================================
 
-Nainštalované počítače kontrolujú GitHub približne každých 20 minút pomocou
-naplánovanej úlohy:
+Nainštalované počítače kontrolujú GitHub pomocou časovača priamo v službe
+agent.exe. Interval je v súbore:
 
-    WindowsLLMManagerUpdateCheck
+    C:\Program Files\WindowsLLMManager\config.json
+
+Nastavenie má tvar:
+
+    "update_check_interval_min": 20
+
+Hodnota je počet minút medzi kontrolami. Hodnota 0 automatické kontroly vypne.
+Po zmene config.json treba reštartovať službu WindowsLLMManager.
 
 Updater stiahne nový agent.exe iba vtedy, keď je verzia novšia. Pred výmenou
 overí SHA-256 aj cosign podpis. Potom zastaví službu, zálohuje starý agent.exe,
 nahradí ho a službu znova spustí. Pri chybe sa pokúsi o rollback.
 
-Na okamžitý test môžeš na klientovi v administrátorskom PowerShelli spustiť:
+Na okamžitú manuálnu kontrolu môžeš na klientovi v administrátorskom
+PowerShelli spustiť updater priamo:
 
-    Start-ScheduledTask -TaskName "WindowsLLMManagerUpdateCheck"
+    & "C:\Program Files\WindowsLLMManager\updater.exe" `
+        --check-only `
+        --config "C:\Program Files\WindowsLLMManager\updater-config.json"
 
-Stav úlohy skontroluješ:
+Tento príkaz používa rovnaké overenie podpisu a rovnaký update flow ako
+automatické spustenie agentom. Agent spúšťa updater ako oddelený proces, takže
+updater zostane bežať aj po tom, ako kvôli výmene zastaví službu.
 
-    Get-ScheduledTaskInfo -TaskName "WindowsLLMManagerUpdateCheck" |
-        Format-List LastRunTime, LastTaskResult, NextRunTime
+Staršia naplánovaná úloha WindowsLLMManagerUpdateCheck sa pri prechode na
+agent 0.1.2 automaticky odstráni.
 
-LastTaskResult = 0 znamená úspešné dokončenie úlohy.
+Spúšťanie updatera agentom sa zapisuje aj do:
+
+    C:\Program Files\WindowsLLMManager\logs\agent.log
 
 Log updatera je tu:
 
@@ -213,12 +227,12 @@ Posledné riadky zobrazíš príkazom:
 
 Po úspešnej aktualizácii bude log obsahovať podobný riadok:
 
-    current=0.1.0 latest=0.1.1 updated=true killed=false
+    current=0.1.1 latest=v0.1.2 updated=true killed=false
 
 Najistejšie overenie je HTTPS /health cez Codex alebo Claude skill. Pole version
 musí obsahovať novú verziu, napríklad:
 
-    "version": "0.1.1"
+    "version": "0.1.2"
 
 
 4. KEDY POUŽIŤ DEPLOY A KEDY RELEASE

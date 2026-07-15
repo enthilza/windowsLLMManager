@@ -21,6 +21,7 @@ import (
 
 	"windowsllmmanager/internal/config"
 	"windowsllmmanager/internal/server"
+	"windowsllmmanager/internal/updatescheduler"
 )
 
 var version = "dev"
@@ -120,6 +121,9 @@ func runConsole(cfg config.Config, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
+	updateCtx, stopUpdates := context.WithCancel(context.Background())
+	defer stopUpdates()
+	updatescheduler.New(cfg.UpdaterPath, cfg.UpdaterConfigPath, cfg.UpdateCheckInterval(), logger).Start(updateCtx)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	select {
@@ -151,6 +155,10 @@ func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, 
 		return false, 1
 	}
 	changes <- svc.Status{State: svc.Running, Accepts: commandsAccepted}
+	updateCtx, stopUpdates := context.WithCancel(context.Background())
+	defer stopUpdates()
+	go removeLegacyUpdateTask(h.logger)
+	updatescheduler.New(h.cfg.UpdaterPath, h.cfg.UpdaterConfigPath, h.cfg.UpdateCheckInterval(), h.logger).Start(updateCtx)
 	for {
 		select {
 		case err := <-errCh:
@@ -171,5 +179,18 @@ func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, 
 				return false, 0
 			}
 		}
+	}
+}
+
+func removeLegacyUpdateTask(logger *log.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	removed, err := updatescheduler.RemoveLegacyScheduledTask(ctx)
+	if err != nil {
+		logger.Printf("legacy update Scheduled Task cleanup failed: %v", err)
+		return
+	}
+	if removed {
+		logger.Printf("removed legacy update Scheduled Task %s; agent-managed scheduler is active", updatescheduler.LegacyTaskName)
 	}
 }

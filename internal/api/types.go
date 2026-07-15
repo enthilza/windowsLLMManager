@@ -73,12 +73,13 @@ type SessionInfoResponse struct {
 }
 
 type HealthResponse struct {
-	Status          string `json:"status"`
-	Version         string `json:"version"`
-	UptimeSec       int64  `json:"uptime_sec"`
-	OpenSessions    int    `json:"open_sessions"`
-	ActiveJobs      int    `json:"active_jobs"`
-	KillSwitchArmed bool   `json:"kill_switch_armed"`
+	Status                 string `json:"status"`
+	Version                string `json:"version"`
+	UptimeSec              int64  `json:"uptime_sec"`
+	OpenSessions           int    `json:"open_sessions"`
+	ActiveJobs             int    `json:"active_jobs"`
+	UpdateCheckIntervalMin int    `json:"update_check_interval_min"`
+	KillSwitchArmed        bool   `json:"kill_switch_armed"`
 }
 
 type BlockedIP struct {

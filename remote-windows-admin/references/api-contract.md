@@ -120,7 +120,7 @@ Returns `204`. An unknown/reaped session returns `404 session_not_found`.
 ### `GET /health`
 
 ```json
-{"status":"ok","version":"1.0.0","uptime_sec":600,"open_sessions":1,"active_jobs":1,"kill_switch_armed":false}
+{"status":"ok","version":"1.0.0","uptime_sec":600,"open_sessions":1,"active_jobs":1,"update_check_interval_min":20,"kill_switch_armed":false}
 ```
 
 Health remains available when braked and then reports `status: braked`.

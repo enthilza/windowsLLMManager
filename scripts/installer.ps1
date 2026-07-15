@@ -64,6 +64,8 @@ try {
     $agentConfig.tls_key_path = Join-Path $InstallDirectory 'tls-key.pem'
     $agentConfig.audit_log_path = Join-Path $InstallDirectory 'logs\audit.jsonl'
     $agentConfig.kill_switch_path = Join-Path $InstallDirectory 'KILLED'
+    $agentConfig | Add-Member -NotePropertyName updater_path -NotePropertyValue (Join-Path $InstallDirectory 'updater.exe') -Force
+    $agentConfig | Add-Member -NotePropertyName updater_config_path -NotePropertyValue (Join-Path $InstallDirectory 'updater-config.json') -Force
     $agentConfig | ConvertTo-Json | Set-Content -LiteralPath $agentConfigPath -Encoding UTF8
     $updaterConfigPath = Join-Path $InstallDirectory 'updater-config.json'
     $updaterConfig = Get-Content $updaterConfigPath -Raw | ConvertFrom-Json
@@ -95,10 +97,6 @@ try {
     New-Service -Name 'WindowsLLMManager' -BinaryPathName $binaryPath -DisplayName 'Windows LLM Manager' -Description 'Authenticated HTTPS endpoint for non-interactive administrative PowerShell.' -StartupType Automatic | Out-Null
     & sc.exe failure WindowsLLMManager reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Null
 
-    $action = New-ScheduledTaskAction -Execute (Join-Path $InstallDirectory 'updater.exe') -Argument ('--check-only --config "' + (Join-Path $InstallDirectory 'updater-config.json') + '"')
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes((Get-Random -Minimum 1 -Maximum 10)) -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Days 3650)
-    $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName 'WindowsLLMManagerUpdateCheck' -Action $action -Trigger $trigger -Principal $taskPrincipal -Force | Out-Null
     Start-Service -Name 'WindowsLLMManager'
 
     Write-Host 'Windows LLM Manager installed and running.'

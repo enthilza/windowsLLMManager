@@ -44,7 +44,7 @@ Advanced automation can still pass `-Version`, `-GitHubOwner`, `-GitHubRepositor
 
 For a fleet, pass `-ManifestPath targets.csv`. Columns are `TargetName`, `TargetIP` (comma/semicolon separated), `TrustedProxyIP`, and `FirewallRemoteAddress`. The script creates one unique TLS package per row.
 
-Copy that directory securely to the matching IP and run `install.cmd` as Administrator. The installer verifies that the target owns the packaged IP, deletes the sensitive ZIP after success, locks down the installation, creates the firewall rule, service and update Scheduled Task, and displays the installed token. It leaves the non-secret installer scripts for transparent manual cleanup.
+Copy that directory securely to the matching IP and run `install.cmd` as Administrator. The installer verifies that the target owns the packaged IP, deletes the sensitive ZIP after success, locks down the installation, creates the firewall rule and service, and displays the installed token. The service launches the separate updater at the `update_check_interval_min` interval from `config.json`; no Scheduled Task is required. It leaves the non-secret installer scripts for transparent manual cleanup.
 
 The installer also places `rotate-token.cmd` and `rotate-token.ps1` in `C:\Program Files\WindowsLLMManager`. Run `rotate-token.cmd` as Administrator to atomically create a replacement token, restart the service when it was running, roll back on failure, restore the locked token ACL and display the new token once. The old token becomes invalid after the service restarts.
 
@@ -61,6 +61,6 @@ Release creation is deliberately separate from provisioning and never asks for a
 .\release.cmd -Publish
 ```
 
-The release contains only the universal `agent.exe`, its SHA-256 file and detached cosign signature. Every installed updater downloads the same binary, verifies it with its embedded public key, stops the service, replaces only `agent.exe`, and restarts it. The machine's TLS certificate/key, bearer token and configuration remain local and unchanged.
+The release contains only the universal `agent.exe`, its SHA-256 file and detached cosign signature. The agent's timer launches the separate updater, which downloads the same binary, verifies it with its embedded public key, stops the service, replaces only `agent.exe`, and restarts it. The updater process is detached so stopping the parent service does not terminate the update. The machine's TLS certificate/key, bearer token and configuration remain local and unchanged.
 
 See [deployment notes](docs/deployment.md) for TLS and Cloudflare topology.

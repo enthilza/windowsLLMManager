@@ -306,11 +306,13 @@ executing. Two binaries sidesteps this cleanly — `updater.exe` swaps
 `agent.exe` while the service is stopped, so the file handle is already
 released.
 
-**Trigger mechanism:** a Windows Scheduled Task runs `updater.exe --check-only`
-every 15-20 minutes — **not** logic embedded inside `agent.exe`. This keeps
-all update-related code isolated in the one binary that's allowed to touch
-GitHub and restart the service; a bug in update-check logic can't crash or
-destabilize the running agent, since the agent never runs that code at all.
+**Trigger mechanism:** `agent.exe` owns only a lightweight timer configured by
+`update_check_interval_min` in `config.json` (default 20 minutes; 0 disables
+automatic checks). On every tick it launches `updater.exe --check-only` as a
+detached process and prevents overlapping launches. All GitHub, verification,
+service-control and file-replacement logic remains isolated in `updater.exe`.
+The detached updater survives when it stops the parent Windows service. A
+legacy `WindowsLLMManagerUpdateCheck` Scheduled Task is removed during migration.
 
 **Update flow:**
 
@@ -397,13 +399,16 @@ C:\Program Files\WindowsLLMManager\
 └── KILLED              (present only when kill-switch armed, see 1.8)
 ```
 
-Scheduled Task registration (run as `SYSTEM`, since it needs to stop/start a
-service and write to `Program Files`):
+The service configuration owns the trigger interval and paths. `agent.exe`
+runs as `LocalSystem`, launches the updater detached and keeps at most one
+agent-triggered updater process active:
 
-```powershell
-$action = New-ScheduledTaskAction -Execute "C:\Program Files\WindowsLLMManager\updater.exe" -Argument "--check-only"
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration ([TimeSpan]::MaxValue)
-Register-ScheduledTask -TaskName "WindowsLLMManagerUpdateCheck" -Action $action -Trigger $trigger -User "SYSTEM" -RunLevel Highest
+```json
+{
+  "update_check_interval_min": 20,
+  "updater_path": "C:\\Program Files\\WindowsLLMManager\\updater.exe",
+  "updater_config_path": "C:\\Program Files\\WindowsLLMManager\\updater-config.json"
+}
 ```
 
 ## 1.7 Build & deployment workflow
@@ -522,7 +527,7 @@ zip's contents (step 4), not decided at install time.
    whole `WindowsLLMManager` folder and `updater.exe` specifically** so only
    `SYSTEM` and `Administrators` can write to them — since `updater.exe` runs
    as `LocalSystem` and pulls+executes remote binaries, if a lesser user could
-   overwrite `updater.exe` (or the Scheduled Task definition, or drop a
+   overwrite `updater.exe` (or `config.json`, or drop a
    malicious `agent.exe` into the folder), that's a privilege-escalation path
    bypassing every other control. Strip inherited write permissions
    (`icacls ... /inheritance:r`) on the folder and re-grant write only to
@@ -532,7 +537,8 @@ zip's contents (step 4), not decided at install time.
 6. Install the Windows service (`sc create` or via the `kardianos/service`
    binary's own install subcommand, whichever the agent implements) and
    start it.
-7. Register the update-check Scheduled Task from 1.6.
+7. Configure the agent-owned updater interval/paths from 1.6 and remove the
+   legacy `WindowsLLMManagerUpdateCheck` Scheduled Task if present.
 8. **Print the token to the console if it was freshly generated in step 3**
    (per-machine mode only — a shared token was already printed once at
    `deploy.cmd` time). This is the only convenient moment to retrieve a

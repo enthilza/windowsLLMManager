@@ -35,11 +35,14 @@ try {
         trusted_proxy_ip = ''
         max_sessions = 5
         idle_session_timeout_sec = 60
-        command_timeout_sec = 2
+        command_timeout_sec = 10
         long_command_timeout_sec = 30
         max_async_jobs = 2
         max_job_results = 10
         job_retention_sec = 60
+        update_check_interval_min = 0
+        updater_path = (Join-Path $work 'updater.exe')
+        updater_config_path = (Join-Path $work 'updater-config.json')
         max_output_bytes = 1048576
         max_request_bytes = 1048576
         rate_limit_per_sec = 20
@@ -63,7 +66,7 @@ try {
         }
         try { $health = Invoke-WlmRequest -Method GET -Path '/health' -BaseUrl $baseUrl -Token $token -CAPath $caCert -CAFingerprint $fingerprint } catch { }
     }
-    if (-not $health -or $health.status -ne 'ok') { throw 'Agent did not become healthy with pinned-CA validation.' }
+    if (-not $health -or $health.status -ne 'ok' -or $health.update_check_interval_min -ne 0) { throw 'Agent did not become healthy with pinned-CA validation and the configured updater interval.' }
     try {
         Invoke-WlmRequest -Method GET -Path '/health' -BaseUrl $baseUrl -Token $token -CAPath $caCert -CAFingerprint ('0' * 64) | Out-Null
         throw 'The helper accepted an incorrect CA fingerprint.'

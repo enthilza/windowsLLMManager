@@ -379,7 +379,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.HealthResponse{
 		Status: status, Version: s.version, UptimeSec: int64(time.Since(s.startedAt).Seconds()),
-		OpenSessions: s.sessions.Count(), ActiveJobs: s.jobs.ActiveCount(), KillSwitchArmed: killed,
+		OpenSessions: s.sessions.Count(), ActiveJobs: s.jobs.ActiveCount(), UpdateCheckIntervalMin: s.cfg.UpdateCheckIntervalMin, KillSwitchArmed: killed,
 	})
 }
 

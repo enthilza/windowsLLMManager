@@ -1,0 +1,266 @@
+WINDOWS LLM MANAGER - MANUÁL PRE DEPLOY A RELEASE
+=================================================
+
+Tento projekt používa dva rozdielne procesy:
+
+1. deploy.cmd
+   Vytvorí inštalačný balík pre jeden konkrétny počítač a jeho IP adresu.
+   Obsahuje samostatný TLS certifikát a privátny kľúč pre daný počítač.
+   Nevytvára GitHub release.
+
+2. release.cmd
+   Vytvorí univerzálny agent.exe pre všetky už nainštalované počítače.
+   Voliteľne ho publikuje ako GitHub release.
+   Neobsahuje TLS certifikát, TLS privátny kľúč ani token.
+
+Pred prvým použitím maj nainštalované Go, Git a PowerShell. Prvé spustenie
+deploy.cmd vytvorí internú CA a cosign pár v externom secrets adresári. Pri
+vytváraní cosign kľúča si zvolíš heslo; bezpečne si ho ulož, pretože ho budeš
+potrebovať pri každom podpisovaní release.
+
+
+1. PRVÁ INŠTALÁCIA NA NOVÝ POČÍTAČ - DEPLOY
+=============================================
+
+V koreňovom adresári projektu spusti:
+
+    deploy.cmd
+
+Nie sú potrebné žiadne prepínače.
+
+Skript položí dve otázky:
+
+1. „Vygenerovať token a vložiť ho do balíka?“
+
+   A = token sa vygeneruje na tomto počítači a vloží do ZIP balíka.
+   N = token nebude v ZIP balíku; install.cmd ho vygeneruje až na cieľovom PC.
+
+   Bezpečnejšia voľba je N, pretože token sa neprenáša v ZIP súbore.
+   Pri oboch možnostiach sa token po inštalácii zobrazí na cieľovom PC.
+   Token si bezpečne ulož; slúži ako heslo pre vzdialenú správu.
+
+2. „IP adresa cieľového Windows PC“
+
+   Zadaj IPv4 adresu, cez ktorú sa bude klient pripájať, napríklad:
+
+       10.0.0.11
+
+   Táto IP adresa bude zapísaná do TLS certifikátu. Ak sa IP počítača neskôr
+   zmení, treba pre novú IP vytvoriť nový deploy balík.
+
+
+KDE SA VYTVORÍ BALÍK
+--------------------
+
+Výsledok sa uloží do:
+
+    .\deployPackage\<IP>-v<VERZIA>\
+
+Príklad:
+
+    .\deployPackage\10.0.0.11-v0.1.1\
+
+V adresári bude najmä:
+
+    install.cmd
+    install.ps1
+    windows-llm-manager-<IP>-v<VERZIA>.zip
+
+Celý adresár bezpečne prenes na správny cieľový počítač. Balík pre jednu IP
+nepoužívaj na inom počítači.
+
+UPOZORNENIE: ZIP obsahuje TLS privátny kľúč cieľového PC a podľa zvolenej
+možnosti môže obsahovať aj token. Adresár deployPackage je ignorovaný Gitom,
+ale Nextcloud ho môže synchronizovať. Odporúča sa vylúčiť deployPackage zo
+synchronizácie alebo balík po prenose a inštalácii odstrániť.
+
+
+INŠTALÁCIA NA CIEĽOVOM PC
+-------------------------
+
+1. Prihlás sa na cieľový počítač.
+2. Otvor prenesený adresár.
+3. Spusti install.cmd ako správca (Run as administrator).
+4. Počkaj na hlásenie, že Windows LLM Manager je nainštalovaný a spustený.
+5. Bezpečne si ulož zobrazený token.
+
+Program sa nainštaluje do:
+
+    C:\Program Files\WindowsLLMManager
+
+Inštalátor vytvorí:
+
+    - službu WindowsLLMManager,
+    - firewall pravidlo pre TCP port 8443,
+    - naplánovanú úlohu WindowsLLMManagerUpdateCheck,
+    - ACL-zamknuté súbory s tokenom a TLS privátnym kľúčom.
+
+Citlivý provisioning ZIP sa po úspešnej inštalácii automaticky odstráni.
+
+
+PRIDANIE ĎALŠIEHO POČÍTAČA
+--------------------------
+
+Pre každý ďalší počítač znova spusti deploy.cmd a zadaj jeho IP adresu.
+Každý počítač dostane vlastný TLS certifikát a privátny kľúč.
+
+Interná CA zostáva spoločná, preto sa CA hodnota v Codex/Claude skille pri
+pridaní ďalšieho počítača nemení.
+
+
+2. NOVÁ VERZIA PRE UŽ NAINŠTALOVANÉ PC - RELEASE
+================================================
+
+Release je univerzálny pre všetky počítače. Nerobí sa osobitný release pre
+každú IP adresu. Aktualizuje sa iba agent.exe; existujúci certifikát, TLS kľúč,
+token a config.json na klientovi zostanú zachované.
+
+
+PRÍPRAVA NOVEJ VERZIE
+---------------------
+
+1. Otvor súbor VERSION a nastav novú verziu, napríklad:
+
+       0.1.1
+
+2. Ulož všetky zmeny do Gitu a pushni ich na GitHub:
+
+       git status --short
+       git add <zmenené-súbory>
+       git commit -m "Release v0.1.1"
+       git push origin main
+
+   Release skript odmietne publikovanie, ak pracovný adresár obsahuje
+   necommitnuté zmeny alebo aktuálny commit ešte nie je pushnutý.
+
+
+IBA LOKÁLNE VYTVORENIE RELEASE SÚBOROV
+--------------------------------------
+
+Spusti:
+
+    release.cmd
+
+Skript skompiluje a podpíše:
+
+    agent.exe
+    agent.exe.sha256
+    agent.exe.sig
+
+Súbory uloží do:
+
+    .\build\release-v<VERZIA>\
+
+Nič sa nepublikuje na GitHub. Pri podpisovaní treba zadať heslo ku cosign
+privátnemu kľúču.
+
+
+VYTVORENIE A PUBLIKOVANIE GITHUB RELEASE
+----------------------------------------
+
+Ak chceš release rovno publikovať, spusti:
+
+    release.cmd -Publish
+
+Nie je nutné predtým samostatne spúšťať release.cmd bez prepínača.
+
+Skript:
+
+    1. overí čistý a pushnutý Git stav,
+    2. skompiluje univerzálny agent.exe,
+    3. vytvorí SHA-256 súbor,
+    4. podpíše agent.exe pomocou cosign,
+    5. vytvorí verejný GitHub release,
+    6. nahrá iba agent.exe, agent.exe.sha256 a agent.exe.sig.
+
+Počas podpisovania zadaj heslo ku cosign privátnemu kľúču.
+
+Na publikovanie musí byť nainštalovaný a autorizovaný GitHub CLI:
+
+    gh auth status
+
+
+3. AUTOMATICKÁ AKTUALIZÁCIA KLIENTOV
+====================================
+
+Nainštalované počítače kontrolujú GitHub približne každých 20 minút pomocou
+naplánovanej úlohy:
+
+    WindowsLLMManagerUpdateCheck
+
+Updater stiahne nový agent.exe iba vtedy, keď je verzia novšia. Pred výmenou
+overí SHA-256 aj cosign podpis. Potom zastaví službu, zálohuje starý agent.exe,
+nahradí ho a službu znova spustí. Pri chybe sa pokúsi o rollback.
+
+Na okamžitý test môžeš na klientovi v administrátorskom PowerShelli spustiť:
+
+    Start-ScheduledTask -TaskName "WindowsLLMManagerUpdateCheck"
+
+Stav úlohy skontroluješ:
+
+    Get-ScheduledTaskInfo -TaskName "WindowsLLMManagerUpdateCheck" |
+        Format-List LastRunTime, LastTaskResult, NextRunTime
+
+LastTaskResult = 0 znamená úspešné dokončenie úlohy.
+
+Log updatera je tu:
+
+    C:\Program Files\WindowsLLMManager\logs\updater.log
+
+Posledné riadky zobrazíš príkazom:
+
+    Get-Content "C:\Program Files\WindowsLLMManager\logs\updater.log" -Tail 20
+
+Po úspešnej aktualizácii bude log obsahovať podobný riadok:
+
+    current=0.1.0 latest=0.1.1 updated=true killed=false
+
+Najistejšie overenie je HTTPS /health cez Codex alebo Claude skill. Pole version
+musí obsahovať novú verziu, napríklad:
+
+    "version": "0.1.1"
+
+
+4. KEDY POUŽIŤ DEPLOY A KEDY RELEASE
+====================================
+
+Použi deploy.cmd, keď:
+
+    - inštaluješ nový počítač,
+    - počítač dostal novú IP adresu a potrebuje nový TLS certifikát,
+    - potrebuješ nanovo vytvoriť celý provisioning balík.
+
+Použi release.cmd -Publish, keď:
+
+    - meníš agent.exe,
+    - opravuješ API alebo vzdialené vykonávanie,
+    - chceš aktualizovať všetky už nainštalované počítače.
+
+Pri bežnej aktualizácii agent.exe sa deploy.cmd znova nespúšťa.
+
+
+5. ROTÁCIA TOKENU
+=================
+
+Ak bol token zverejnený alebo ho chceš pravidelne meniť, na klientovi spusti
+ako správca:
+
+    C:\Program Files\WindowsLLMManager\rotate-token.cmd
+
+Skript bezpečne vymení token, reštartuje službu a zobrazí nový token. Nový token
+si ulož a aktualizuj ho v mieste, odkiaľ ho používa Codex alebo Claude.
+
+
+6. DÔLEŽITÉ BEZPEČNOSTNÉ PRAVIDLÁ
+=================================
+
+    - Nikdy necommituj CA privátny kľúč, cosign privátny kľúč, TLS privátny
+      kľúč ani bearer token.
+    - Provisioning ZIP prenášaj bezpečne a po použití ho odstráň.
+    - Cosign a CA privátne kľúče zostávajú v:
+
+          %USERPROFILE%\.windows-llm-manager-secrets
+
+    - Tento secrets adresár nekopíruj do repozitára ani do verejného release.
+    - Release na GitHube smie obsahovať iba agent.exe, agent.exe.sha256 a
+      agent.exe.sig.

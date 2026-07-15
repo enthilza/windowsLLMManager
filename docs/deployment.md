@@ -48,6 +48,8 @@ Running `deploy.cmd` without arguments asks whether a new token should be placed
 
 The default output is `.\deployPackage\<IP>-<version>`. Git ignores the entire `deployPackage` directory and the deploy script removes inherited ACLs, granting access only to the current user, Administrators and SYSTEM. This does not prevent a sync client running as the current user from uploading the ZIP. Exclude that directory from Nextcloud or remove it immediately after secure transfer. The CA private key, cosign private key and staging directory remain outside the repository under `%USERPROFILE%\.windows-llm-manager-secrets`.
 
+Every provisioning ZIP contains `rotate-token.cmd` and `rotate-token.ps1`; the installer copies both beside the installed agent. The rotation helper must run elevated. It generates a new token into a temporary ACL-locked file, stops the service only for the atomic swap, starts it with the new token, removes the old token only after successful startup, and rolls back if the swap or restart fails.
+
 ## Universal GitHub releases
 
 `release.cmd` is separate from provisioning. It takes no target name or IP and never creates a TLS certificate, token, configuration or installation ZIP. It builds one universal `agent.exe`, writes its SHA-256 digest, creates a detached cosign signature and publishes those three files only when `-Publish` is explicit.

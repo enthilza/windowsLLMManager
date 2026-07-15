@@ -42,6 +42,8 @@ For a fleet, pass `-ManifestPath targets.csv`. Columns are `TargetName`, `Target
 
 Copy that directory securely to the matching IP and run `install.cmd` as Administrator. The installer verifies that the target owns the packaged IP, deletes the sensitive ZIP after success, locks down the installation, creates the firewall rule, service and update Scheduled Task, and displays the installed token. It leaves the non-secret installer scripts for transparent manual cleanup.
 
+The installer also places `rotate-token.cmd` and `rotate-token.ps1` in `C:\Program Files\WindowsLLMManager`. Run `rotate-token.cmd` as Administrator to atomically create a replacement token, restart the service when it was running, roll back on failure, restore the locked token ACL and display the new token once. The old token becomes invalid after the service restarts.
+
 `-IncludeToken` creates a new token for each package. Use `-SharedToken` only for a consciously accepted homogeneous batch: it creates or reuses an ACL-locked `shared-token.txt` so separate TLS packages deliberately share one bearer token. Provisioning ZIPs, bearer tokens and TLS keys are never release assets.
 
 ## Build a universal release

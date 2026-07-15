@@ -268,6 +268,8 @@ $settings = [ordered]@{
     ca_sha256_fingerprint = $CaFingerprint
 }
 $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Stage 'install-settings.json') -Encoding UTF8
+Copy-Item -LiteralPath (Join-Path $ProjectRoot 'scripts\rotate-token.cmd') -Destination (Join-Path $Stage 'rotate-token.cmd')
+Copy-Item -LiteralPath (Join-Path $ProjectRoot 'scripts\rotate-token.ps1') -Destination (Join-Path $Stage 'rotate-token.ps1')
 
 $PackageName = "windows-llm-manager-$SafeTarget-$Tag.zip"
 $PackagePath = Join-Path $Dist $PackageName

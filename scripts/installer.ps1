@@ -25,7 +25,7 @@ $temp = Join-Path $env:TEMP ("wlm-install-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
     Expand-Archive -LiteralPath $PackagePath -DestinationPath $temp
-    $required = 'agent.exe', 'updater.exe', 'config.json', 'updater-config.json', 'tls-cert.pem', 'tls-key.pem', 'install-settings.json'
+    $required = 'agent.exe', 'updater.exe', 'config.json', 'updater-config.json', 'tls-cert.pem', 'tls-key.pem', 'install-settings.json', 'rotate-token.cmd', 'rotate-token.ps1'
     foreach ($name in $required) {
         if (-not (Test-Path -LiteralPath (Join-Path $temp $name))) { throw "Package is missing $name" }
     }

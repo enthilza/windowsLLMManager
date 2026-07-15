@@ -106,8 +106,9 @@ try {
     if ($freshToken) {
         Write-Warning 'Record this token now; it will not be printed again:'
         Write-Host $token
-    } elseif ($settings.token_mode -eq 'shared') {
-        Write-Host 'The package-provided shared token was installed.'
+    } elseif ($settings.token_mode -in @('packaged', 'shared')) {
+        Write-Warning 'Record this package-provided token now:'
+        Write-Host (Get-Content -LiteralPath $tokenPath -Raw).Trim()
     } else {
         Write-Host 'The existing per-machine token was preserved.'
     }

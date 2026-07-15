@@ -4,7 +4,8 @@ Windows LLM Manager is an authenticated HTTPS service for non-interactive admini
 
 - `agent.exe`: Windows service with one-shot and persistent PowerShell execution;
 - `updater.exe`: signed GitHub Release updater with checksum, embedded cosign verification and rollback;
-- `deploy.ps1`: Windows-first host-specific packaging, internal CA and release workflow;
+- `deploy.cmd`: interactive host-specific provisioning package builder;
+- `release.cmd`: separate universal `agent.exe` signing and GitHub release workflow;
 - `scripts/installer.ps1`: elevated target installer used as `install.ps1` in generated packages;
 - `remote-windows-admin/`: skill and CA-validating PowerShell API helpers.
 
@@ -23,26 +24,35 @@ The local integration test creates a temporary CA and leaf certificate, starts t
 
 ## Build a provisioning package
 
-Run from an ordinary Windows terminal. Signing is interactive when the cosign key is first generated or unlocked.
+For the normal one-PC workflow, run this from an ordinary Windows terminal with no arguments:
 
 ```powershell
-.\deploy.cmd `
-  -Version 0.1.0 `
-  -GitHubOwner YOUR_OWNER `
-  -GitHubRepository windows-llm-manager `
-  -TargetName host01.example.internal `
-  -TargetIP 10.0.0.11 `
-  -TrustedProxyIP 10.0.0.5 `
-  -FirewallRemoteAddress 10.0.0.5 `
-  -SecretsDirectory D:\WindowsLLMManager-Secrets
+.\deploy.cmd
 ```
 
-The first run creates the internal CA and cosign pair outside the repository. Every target receives a unique CA-signed leaf certificate and private key. The output under `<SecretsDirectory>\packages\<host>-<version>\` contains a host-specific ZIP, `install.ps1`, and a thin `install.cmd` launcher. Staging and provisioning ZIPs never enter this repository or its Nextcloud-synchronized path.
+The script asks whether to generate a bearer token into the package and then asks for the target PC's IPv4 address. The address becomes the certificate IP SAN, so clients connect to that same IP. If no token is packaged, `install.cmd` generates it on the target. In both modes the installer displays the installed token once.
 
-For a fleet, pass `-ManifestPath targets.csv`. Columns are `TargetName`, `TargetIP` (comma/semicolon separated), `TrustedProxyIP`, and `FirewallRemoteAddress`. The script creates one unique TLS package per row; `-Publish` is applied only once.
+The first run creates the internal CA and cosign pair outside the repository; creating the password-protected signing key adds a one-time password prompt. Every generated package receives a unique CA-signed leaf certificate and private key. Output under `<SecretsDirectory>\packages\<IP>-<version>\` contains a host-specific ZIP, `install.ps1`, and a thin `install.cmd` launcher. Staging and provisioning ZIPs never enter this repository or its Nextcloud-synchronized path.
 
-Copy that directory securely to the matching host and run `install.cmd` as Administrator. The installer deletes the sensitive ZIP after success, locks down the installation, creates the firewall rule, service and update Scheduled Task, and prints a newly generated per-machine token. It leaves the non-secret installer scripts for transparent manual cleanup.
+Advanced automation can still pass `-Version`, `-GitHubOwner`, `-GitHubRepository`, `-TargetName`, `-TargetIP`, proxy/firewall settings, or a fleet manifest to `deploy.cmd`. Ordinary package creation never creates or publishes GitHub release assets and does not unlock an existing cosign private key.
 
-Use `-SharedToken` only for a consciously accepted homogeneous batch. It creates or reuses an ACL-locked `shared-token.txt` in the external secrets directory so separate host-specific TLS packages can deliberately share one bearer token; pass `-SharedTokenFile` to isolate different batches. Use `-Publish` only after `gh auth login`; it publishes only `agent.exe`, `agent.exe.sha256`, and `agent.exe.sig`. Provisioning ZIPs and TLS keys are never release assets.
+For a fleet, pass `-ManifestPath targets.csv`. Columns are `TargetName`, `TargetIP` (comma/semicolon separated), `TrustedProxyIP`, and `FirewallRemoteAddress`. The script creates one unique TLS package per row.
+
+Copy that directory securely to the matching IP and run `install.cmd` as Administrator. The installer verifies that the target owns the packaged IP, deletes the sensitive ZIP after success, locks down the installation, creates the firewall rule, service and update Scheduled Task, and displays the installed token. It leaves the non-secret installer scripts for transparent manual cleanup.
+
+`-IncludeToken` creates a new token for each package. Use `-SharedToken` only for a consciously accepted homogeneous batch: it creates or reuses an ACL-locked `shared-token.txt` so separate TLS packages deliberately share one bearer token. Provisioning ZIPs, bearer tokens and TLS keys are never release assets.
+
+## Build a universal release
+
+Release creation is deliberately separate from provisioning and never asks for a target IP:
+
+```powershell
+# First update VERSION to 0.2.0, commit it, and push the release source.
+.\release.cmd
+# Review build\release-v0.2.0, then publish explicitly:
+.\release.cmd -Publish
+```
+
+The release contains only the universal `agent.exe`, its SHA-256 file and detached cosign signature. Every installed updater downloads the same binary, verifies it with its embedded public key, stops the service, replaces only `agent.exe`, and restarts it. The machine's TLS certificate/key, bearer token and configuration remain local and unchanged.
 
 See [deployment notes](docs/deployment.md) for TLS and Cloudflare topology.

@@ -1,14 +1,11 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^v?\d+\.\d+\.\d+$')]
-    [string]$Version,
+    [string]$Version = '',
 
-    [Parameter(Mandatory = $true)]
-    [string]$GitHubOwner,
+    [string]$GitHubOwner = 'enthilza',
 
-    [Parameter(Mandatory = $true)]
-    [string]$GitHubRepository,
+    [string]$GitHubRepository = 'windowsLLMManager',
 
     [string]$TargetName,
 
@@ -20,16 +17,45 @@ param(
     [int]$Port = 8443,
     [string]$SecretsDirectory = (Join-Path $env:USERPROFILE '.windows-llm-manager-secrets'),
     [string]$OutputDirectory = '',
+    [switch]$IncludeToken,
     [switch]$SharedToken,
-    [string]$SharedTokenFile = '',
-    [switch]$Publish,
-    [switch]$Draft,
-    [switch]$Prerelease,
-    [string]$ReleaseNotes = ''
+    [string]$SharedTokenFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+
+if (-not $Version) {
+    $versionPath = Join-Path $ProjectRoot 'VERSION'
+    if (-not (Test-Path -LiteralPath $versionPath)) { throw 'VERSION is missing. Restore it or pass -Version explicitly.' }
+    $Version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
+}
+
+$interactive = $PSBoundParameters.Count -eq 0
+if ($interactive) {
+    Write-Host 'Windows LLM Manager - vytvorenie instalacneho balika'
+    Write-Host ''
+
+    while ($true) {
+        $tokenAnswer = (Read-Host 'Vygenerovat token a vlozit ho do balika? [a/N]').Trim().ToLowerInvariant()
+        if ($tokenAnswer -in @('', 'n', 'nie', 'no')) { break }
+        if ($tokenAnswer -in @('a', 'ano', 'y', 'yes')) { $IncludeToken = $true; break }
+        Write-Warning 'Zadaj A pre ano alebo N pre nie.'
+    }
+
+    while ($true) {
+        $ipText = (Read-Host 'IP adresa cieloveho Windows PC').Trim()
+        $parsedIP = $null
+        if ([Net.IPAddress]::TryParse($ipText, [ref]$parsedIP) -and $parsedIP.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+            $TargetName = $parsedIP.ToString()
+            $TargetIP = @($TargetName)
+            break
+        }
+        Write-Warning 'Zadaj platnu IPv4 adresu, napriklad 192.168.1.50.'
+    }
+    Write-Host ''
+}
 
 if ($ManifestPath) {
     $rows = @(Import-Csv -LiteralPath $ManifestPath)
@@ -47,19 +73,17 @@ if ($ManifestPath) {
             TargetName = $rowTargetName; TargetIP = $rowIPs; Port = $Port
             TrustedProxyIP = $(if ($rowProxyValue) { $rowProxyValue } else { $TrustedProxyIP })
             FirewallRemoteAddress = $(if ($rowFirewallValue) { $rowFirewallValue } else { $FirewallRemoteAddress })
-            SecretsDirectory = $SecretsDirectory; OutputDirectory = $OutputDirectory; ReleaseNotes = $ReleaseNotes
+            SecretsDirectory = $SecretsDirectory; OutputDirectory = $OutputDirectory
         }
+        if ($IncludeToken) { $child.IncludeToken = $true }
         if ($SharedToken) { $child.SharedToken = $true; $child.SharedTokenFile = $SharedTokenFile }
-        if ($Publish -and $index -eq 0) { $child.Publish = $true }
-        if ($Draft) { $child.Draft = $true }
-        if ($Prerelease) { $child.Prerelease = $true }
         & $PSCommandPath @child
     }
     return
 }
 if (-not $TargetName) { throw 'Specify -TargetName or -ManifestPath.' }
+if ($IncludeToken -and $SharedToken) { throw 'Use either -IncludeToken or -SharedToken, not both.' }
 
-$ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $SecretsDirectory = [IO.Path]::GetFullPath($SecretsDirectory)
 if ($SecretsDirectory.StartsWith($ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'SecretsDirectory must be outside the project repository.'
@@ -128,25 +152,8 @@ function Find-OrInstallCosign {
     return $local
 }
 
-function Ensure-GitHubCLI {
-    $existing = Get-Command gh.exe -ErrorAction SilentlyContinue
-    if ($existing) { return $existing.Source }
-    if (-not $Publish) { return $null }
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) { throw 'GitHub CLI is required for -Publish. Install gh and run gh auth login.' }
-    Invoke-Native -FilePath $winget.Source -Arguments @('install', '--id', 'GitHub.cli', '--exact', '--source', 'winget', '--accept-package-agreements', '--accept-source-agreements')
-    $candidates = @(
-        (Join-Path $env:ProgramFiles 'GitHub CLI\gh.exe'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\GitHub CLI\gh.exe')
-    )
-    $found = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if (-not $found) { throw 'GitHub CLI installation completed but gh.exe was not found. Open a new terminal and retry.' }
-    return $found
-}
-
 Protect-SecretsDirectory
 $Cosign = Find-OrInstallCosign
-$Gh = Ensure-GitHubCLI
 
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
@@ -231,8 +238,10 @@ $updaterConfig = [ordered]@{
 }
 $updaterConfig | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Stage 'updater-config.json') -Encoding UTF8
 
-$tokenMode = if ($SharedToken) { 'shared' } else { 'per-machine' }
-if ($SharedToken) {
+$tokenMode = if ($SharedToken) { 'shared' } elseif ($IncludeToken) { 'packaged' } else { 'per-machine' }
+if ($IncludeToken) {
+    Invoke-Native -FilePath $AgentExe -Arguments @('--gen-token', '--token-output', (Join-Path $Stage 'token.txt')) | Out-Null
+} elseif ($SharedToken) {
     Write-Warning 'Shared token selected: disclosure compromises every host installed from this package.'
     if (-not $SharedTokenFile) { $SharedTokenFile = Join-Path $SecretsDirectory 'shared-token.txt' }
     $SharedTokenFile = [IO.Path]::GetFullPath($SharedTokenFile)
@@ -260,32 +269,10 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot 'scripts\installer.ps1') -Destina
 $cmd = "@echo off`r`npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0install.ps1`" -PackagePath `"%~dp0$PackageName`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $Dist 'install.cmd') -Value $cmd -Encoding ASCII
 
-$ReleaseDir = Join-Path $BuildRoot "release-$Tag"
-if (Test-Path -LiteralPath $ReleaseDir) { Remove-Item -LiteralPath $ReleaseDir -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
-$ReleaseAgent = Join-Path $ReleaseDir 'agent.exe'
-Copy-Item -LiteralPath $AgentExe -Destination $ReleaseAgent
-$hash = (Get-FileHash -LiteralPath $ReleaseAgent -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -LiteralPath "$ReleaseAgent.sha256" -Value "$hash  agent.exe" -Encoding ASCII
-Invoke-Native -FilePath $Cosign -Arguments @(
-    'sign-blob', '--yes', '--key', $CosignKey,
-    '--use-signing-config=false', '--new-bundle-format=false', '--tlog-upload=false',
-    '--output-signature', "$ReleaseAgent.sig", $ReleaseAgent
-)
-
-if ($Publish) {
-    Invoke-Native -FilePath $Gh -Arguments @('auth', 'status', '--hostname', 'github.com')
-    $arguments = @('release', 'create', $Tag, $ReleaseAgent, "$ReleaseAgent.sha256", "$ReleaseAgent.sig", '--repo', "$GitHubOwner/$GitHubRepository", '--title', "Windows LLM Manager $Tag")
-    if ($ReleaseNotes) { $arguments += @('--notes', $ReleaseNotes) } else { $arguments += @('--generate-notes') }
-    if ($Draft) { $arguments += '--draft' }
-    if ($Prerelease) { $arguments += '--prerelease' }
-    Invoke-Native -FilePath $Gh -Arguments $arguments
-}
-
 Remove-Item -LiteralPath $Stage -Recurse -Force
 Write-Host ''
 Write-Host "Provisioning package: $PackagePath"
-Write-Host "Target: $TargetName"
+Write-Host "Target IP: $TargetName"
+Write-Host "Token: $(if ($IncludeToken) { 'included in package' } elseif ($SharedToken) { 'shared token included' } else { 'generated by install.cmd on target' })"
 Write-Host "CA SHA-256: $CaFingerprint"
 Write-Warning 'The provisioning ZIP contains a host TLS private key. Transfer it securely and let install.ps1 delete it after installation.'
-if (-not $Publish) { Write-Host "Signed release assets (not published): $ReleaseDir" }

@@ -34,6 +34,8 @@ The script asks whether to generate a bearer token into the package and then ask
 
 The first run creates the internal CA and cosign pair outside the repository; creating the password-protected signing key adds a one-time password prompt. Every generated package receives a unique CA-signed leaf certificate and private key. Output under `.\deployPackage\<IP>-<version>\` contains a host-specific ZIP, `install.ps1`, and a thin `install.cmd` launcher. The directory is ACL-restricted and excluded by `.gitignore`.
 
+After initializing the CA, deploy also updates the two public trust files in existing Codex (`%CODEX_HOME%\skills\remote-windows-admin`) and Claude Code (`%USERPROFILE%\.claude\skills\remote-windows-admin`) installations. This prevents a previously installed skill from retaining its `UNINITIALIZED_RUN_DEPLOY_PS1` placeholder. No bearer token, CA private key, cosign key or host leaf key is copied into either skill.
+
 The provisioning ZIP contains a leaf TLS private key and may contain a bearer token. Because this repository is stored under Nextcloud, configure the sync client to exclude `deployPackage` or remove the package immediately after transferring it to the target PC. The internal CA key, cosign key and temporary staging files always remain in the external secrets directory and never enter `deployPackage`.
 
 Advanced automation can still pass `-Version`, `-GitHubOwner`, `-GitHubRepository`, `-TargetName`, `-TargetIP`, proxy/firewall settings, or a fleet manifest to `deploy.cmd`. Ordinary package creation never creates or publishes GitHub release assets and does not unlock an existing cosign private key.

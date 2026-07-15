@@ -192,6 +192,25 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to calculate the CA fingerprint.' }
 Copy-Item -LiteralPath $CaCert -Destination (Join-Path $ProjectRoot 'remote-windows-admin\references\internal-ca.pem') -Force
 Set-Content -LiteralPath (Join-Path $ProjectRoot 'remote-windows-admin\references\ca-fingerprint.txt') -Value $CaFingerprint -Encoding ASCII
 
+$CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$SkillInstallations = @(
+    [pscustomobject]@{ Agent = 'Codex'; Path = (Join-Path ([IO.Path]::GetFullPath($CodexHome)) 'skills\remote-windows-admin') },
+    [pscustomobject]@{ Agent = 'Claude Code'; Path = (Join-Path $env:USERPROFILE '.claude\skills\remote-windows-admin') }
+)
+foreach ($installation in $SkillInstallations) {
+    if (Test-Path -LiteralPath (Join-Path $installation.Path 'SKILL.md')) {
+        try {
+            $InstalledReferences = Join-Path $installation.Path 'references'
+            New-Item -ItemType Directory -Force -Path $InstalledReferences | Out-Null
+            Copy-Item -LiteralPath $CaCert -Destination (Join-Path $InstalledReferences 'internal-ca.pem') -Force
+            Set-Content -LiteralPath (Join-Path $InstalledReferences 'ca-fingerprint.txt') -Value $CaFingerprint -Encoding ASCII
+            Write-Host "Updated installed $($installation.Agent) skill CA trust: $($installation.Path)"
+        } catch {
+            Write-Warning "Unable to update the installed $($installation.Agent) skill CA trust: $($_.Exception.Message)"
+        }
+    }
+}
+
 $AgentExe = Join-Path $Stage 'agent.exe'
 $UpdaterExe = Join-Path $Stage 'updater.exe'
 Invoke-Native -FilePath go -Arguments @('build', '-buildvcs=false', '-trimpath', '-ldflags', "-s -w -X main.version=$Version", '-o', $AgentExe, '.\cmd\agent')

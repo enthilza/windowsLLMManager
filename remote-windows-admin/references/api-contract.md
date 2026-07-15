@@ -4,6 +4,7 @@
 
 - Connection and errors
 - Execution
+- Asynchronous jobs
 - Sessions
 - Health and control
 - Status-code map
@@ -52,6 +53,38 @@ Response (`200`):
 
 `504 command_timeout` includes `details.execution`; state is unknown. `500 shell_failure` means no trustworthy command result was framed.
 
+## Asynchronous jobs
+
+Use jobs for commands that may exceed the synchronous 120-second limit.
+
+### `POST /jobs`
+
+Request:
+
+```json
+{"command":"DISM.exe /Online /Cleanup-Image /StartComponentCleanup","format":"lines","timeout_sec":7200}
+```
+
+`timeout_sec` defaults to the configured `long_command_timeout_sec` (default 7200) and cannot exceed it. Returns `202` immediately:
+
+```json
+{"job_id":"32-hex-character-id","status":"running","created_at":"...","started_at":"...","timeout_sec":7200}
+```
+
+Returns `409 job_limit` when the configured active-job limit is reached.
+
+### `GET /jobs/{id}`
+
+Returns `200`. Status is `running`, `cancelling`, `completed`, `failed`, `timed_out`, or `cancelled`. Terminal responses include `completed_at`; they include `execution` when PowerShell produced execution metadata. `failed` can also include a server/process `error`. Completed results are retained for `job_retention_sec` (default 3600), after which the endpoint returns `404 job_not_found`.
+
+```json
+{"job_id":"id","status":"completed","created_at":"...","started_at":"...","completed_at":"...","timeout_sec":7200,"execution":{"success":true,"exit_code":0,"format":"lines","output":["The operation completed successfully."],"stderr":[],"truncated":false,"timed_out":false,"duration_ms":612345}}
+```
+
+### `DELETE /jobs/{id}`
+
+Requests cancellation and returns `202` with status `cancelling`; poll until `cancelled`. Unknown jobs return `404 job_not_found`; terminal jobs return `409 job_not_running` with their retained snapshot. Cancellation and timeout kill the PowerShell process tree. OS services to which a command delegated work may require a separate read-only state check.
+
 ## Sessions
 
 ### `POST /session`
@@ -87,7 +120,7 @@ Returns `204`. An unknown/reaped session returns `404 session_not_found`.
 ### `GET /health`
 
 ```json
-{"status":"ok","version":"1.0.0","uptime_sec":600,"open_sessions":1,"kill_switch_armed":false}
+{"status":"ok","version":"1.0.0","uptime_sec":600,"open_sessions":1,"active_jobs":1,"kill_switch_armed":false}
 ```
 
 Health remains available when braked and then reports `status: braked`.
@@ -107,24 +140,25 @@ Returns `204`, `400 invalid_ip`, or `404 ip_not_blocked`. A client whose own IP 
 Explicit operator instruction is mandatory. Returns:
 
 ```json
-{"armed":true,"sessions_killed":true,"disarm":"local_only"}
+{"armed":true,"sessions_killed":true,"jobs_killed":1,"disarm":"local_only"}
 ```
 
-It creates the on-disk flag and immediately kills all sessions. There is no remote disarm endpoint.
+It creates the on-disk flag and immediately kills all sessions and asynchronous jobs. There is no remote disarm endpoint.
 
 ## Status-code map
 
 | HTTP | Code | Meaning and response |
 |---|---|---|
-| 400 | `invalid_json`, `empty_command`, `invalid_format`, `invalid_ip` | Fix the request; do not reinterpret it as command failure. |
+| 400 | `invalid_json`, `empty_command`, `invalid_format`, `invalid_timeout`, `invalid_ip` | Fix the request; do not reinterpret it as command failure. |
 | 401 | `auth_failed` | Stop; obtain the correct token. |
-| 404 | `session_not_found`, `ip_not_blocked` | Requested server resource does not exist. |
-| 409 | `session_limit` | Close a known unused session. |
+| 404 | `job_not_found`, `session_not_found`, `ip_not_blocked` | Requested server resource does not exist. |
+| 409 | `job_limit`, `session_limit` | Wait for a known active resource or close/cancel one intentionally. |
+| 409 | `job_not_running` | The job is already terminal; inspect its retained result. |
 | 409 | `session_process_exited` | PowerShell died; session state was lost. |
 | 413 | `request_too_large` | Reduce the command/request. |
 | 423 | `killswitch_active` | Stop; local admin intervention is required. |
 | 429 | `rate_limited` | Slow down. |
-| 500 | `shell_failure`, `session_*_failed` | Server/process failure; do not assume command state. |
+| 500 | `shell_failure`, `job_*_failed`, `session_*_failed` | Server/process failure; do not assume command state. |
 | 504 | `command_timeout` | State unknown; verify read-only before deciding. |
 
 An already-blocklisted source receives a dropped TCP connection without an HTTP body.

@@ -36,6 +36,10 @@ try {
         max_sessions = 5
         idle_session_timeout_sec = 60
         command_timeout_sec = 2
+        long_command_timeout_sec = 30
+        max_async_jobs = 2
+        max_job_results = 10
+        job_retention_sec = 60
         max_output_bytes = 1048576
         max_request_bytes = 1048576
         rate_limit_per_sec = 20
@@ -75,10 +79,33 @@ try {
     $sessionResult = & (Join-Path $root 'remote-windows-admin\scripts\ps_session.ps1') -Action exec -BaseUrl $baseUrl -Token $token -SessionId $opened.session_id -Command '$E2EValue+1' -Format lines -CAPath $caCert -CAFingerprint $fingerprint
     if ($sessionResult.execution.output[0] -ne '42') { throw 'Persistent session state test failed.' }
 
+    $quickJob = & (Join-Path $root 'remote-windows-admin\scripts\ps_job.ps1') -Action Submit -BaseUrl $baseUrl -Token $token -Command "Start-Sleep -Milliseconds 250; 'job-ok'" -Format lines -TimeoutSec 10 -CAPath $caCert -CAFingerprint $fingerprint
+    $quickStatus = $null
+    for ($i = 0; $i -lt 30; $i++) {
+        $quickStatus = & (Join-Path $root 'remote-windows-admin\scripts\ps_job.ps1') -Action Status -BaseUrl $baseUrl -Token $token -JobId $quickJob.job_id -CAPath $caCert -CAFingerprint $fingerprint
+        if ($quickStatus.status -notin @('running', 'cancelling')) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ($quickStatus.status -ne 'completed' -or -not $quickStatus.execution.success -or $quickStatus.execution.output[0] -ne 'job-ok') { throw 'Asynchronous job completion failed.' }
+
+    $longJob = & (Join-Path $root 'remote-windows-admin\scripts\ps_job.ps1') -Action Submit -BaseUrl $baseUrl -Token $token -Command "Start-Sleep -Seconds 20; 'should-not-complete'" -Format lines -TimeoutSec 30 -CAPath $caCert -CAFingerprint $fingerprint
+
     $armed = Invoke-WlmRequest -Method POST -Path '/killswitch' -BaseUrl $baseUrl -Token $token -CAPath $caCert -CAFingerprint $fingerprint
-    if (-not $armed.armed) { throw 'Kill-switch did not arm.' }
-    $braked = Invoke-WlmRequest -Method GET -Path '/health' -BaseUrl $baseUrl -Token $token -CAPath $caCert -CAFingerprint $fingerprint
-    if (-not $braked.kill_switch_armed -or $braked.open_sessions -ne 0) { throw 'Kill-switch did not kill sessions or report braked state.' }
+    if (-not $armed.armed -or $armed.jobs_killed -lt 1) { throw 'Kill-switch did not arm and cancel the active job.' }
+    $braked = $null
+    for ($i = 0; $i -lt 30; $i++) {
+        $braked = Invoke-WlmRequest -Method GET -Path '/health' -BaseUrl $baseUrl -Token $token -CAPath $caCert -CAFingerprint $fingerprint
+        if ($braked.active_jobs -eq 0) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $braked.kill_switch_armed -or $braked.open_sessions -ne 0 -or $braked.active_jobs -ne 0) { throw 'Kill-switch did not kill active work or report braked state.' }
+    $cancelled = $null
+    for ($i = 0; $i -lt 30; $i++) {
+        $cancelled = & (Join-Path $root 'remote-windows-admin\scripts\ps_job.ps1') -Action Status -BaseUrl $baseUrl -Token $token -JobId $longJob.job_id -CAPath $caCert -CAFingerprint $fingerprint
+        if ($cancelled.status -eq 'cancelled') { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if ($cancelled.status -ne 'cancelled' -or $cancelled.cancel_reason -ne 'kill_switch') { throw 'Kill-switch job cancellation was not retained.' }
     try {
         & (Join-Path $root 'remote-windows-admin\scripts\ps_exec.ps1') -BaseUrl $baseUrl -Token $token -Command 'Get-Date' -Format lines -CAPath $caCert -CAFingerprint $fingerprint | Out-Null
         throw 'Execution unexpectedly succeeded while kill-switch was armed.'
@@ -87,7 +114,7 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $work 'KILLED') -Force
-    Write-Host 'Local HTTPS/CA/API/session/kill-switch integration test passed.'
+    Write-Host 'Local HTTPS/CA/API/session/async-job/kill-switch integration test passed.'
 }
 finally {
     if ($process -and -not $process.HasExited) {

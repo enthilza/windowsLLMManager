@@ -18,6 +18,7 @@ import (
 var (
 	ErrShellExited = errors.New("PowerShell process exited before returning a complete result")
 	ErrTimedOut    = errors.New("PowerShell command timed out")
+	ErrBlocked     = errors.New("PowerShell execution is blocked")
 )
 
 type childProcess struct {
@@ -79,6 +80,7 @@ type Runner struct {
 	MaxOutputBytes int
 	mu             sync.Mutex
 	active         map[*childProcess]struct{}
+	blocked        bool
 }
 
 func NewRunner(maxOutputBytes int) *Runner {
@@ -87,6 +89,15 @@ func NewRunner(maxOutputBytes int) *Runner {
 
 func (r *Runner) Run(ctx context.Context, command, format string) (api.ExecutionResult, error) {
 	started := time.Now()
+	if ctx.Err() != nil {
+		return timeoutResult(format, started, false), ErrTimedOut
+	}
+	r.mu.Lock()
+	blocked := r.blocked
+	r.mu.Unlock()
+	if blocked {
+		return api.ExecutionResult{}, ErrBlocked
+	}
 	id, err := randomID()
 	if err != nil {
 		return api.ExecutionResult{}, err
@@ -96,6 +107,12 @@ func (r *Runner) Run(ctx context.Context, command, format string) (api.Execution
 		return api.ExecutionResult{}, fmt.Errorf("start PowerShell: %w", err)
 	}
 	r.mu.Lock()
+	if r.blocked {
+		r.mu.Unlock()
+		p.kill()
+		<-p.waitDone
+		return api.ExecutionResult{}, ErrBlocked
+	}
 	if r.active == nil {
 		r.active = make(map[*childProcess]struct{})
 	}
@@ -147,6 +164,19 @@ func (r *Runner) Run(ctx context.Context, command, format string) (api.Execution
 
 func (r *Runner) KillAll() {
 	r.mu.Lock()
+	processes := make([]*childProcess, 0, len(r.active))
+	for process := range r.active {
+		processes = append(processes, process)
+	}
+	r.mu.Unlock()
+	for _, process := range processes {
+		process.kill()
+	}
+}
+
+func (r *Runner) BlockAndKillAll() {
+	r.mu.Lock()
+	r.blocked = true
 	processes := make([]*childProcess, 0, len(r.active))
 	for process := range r.active {
 		processes = append(processes, process)

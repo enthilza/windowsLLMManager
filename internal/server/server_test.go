@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"windowsllmmanager/internal/api"
 	"windowsllmmanager/internal/config"
@@ -30,7 +31,11 @@ func newTestServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(s.sessions.Close)
+	t.Cleanup(func() {
+		s.jobs.Close()
+		s.sessions.Close()
+		s.runner.KillAll()
+	})
 	return s, token
 }
 
@@ -94,5 +99,44 @@ func TestExecRejectsUnknownFieldsAndFormats(t *testing.T) {
 	w = request(t, s, token, http.MethodPost, "/exec", map[string]any{"command": "Get-Date", "format": "lines", "surprise": true})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_json") {
 		t.Fatalf("unknown field returned %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAsyncJobLifecycle(t *testing.T) {
+	s, token := newTestServer(t)
+	w := request(t, s, token, http.MethodPost, "/jobs", api.JobRequest{Command: "Start-Sleep -Milliseconds 100; 'done'", Format: api.FormatLines, TimeoutSec: 5})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("job submit returned %d: %s", w.Code, w.Body.String())
+	}
+	var created api.JobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil || created.JobID == "" {
+		t.Fatalf("invalid create response: %+v err=%v", created, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w = request(t, s, token, http.MethodGet, "/jobs/"+created.JobID, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("job status returned %d: %s", w.Code, w.Body.String())
+		}
+		var status api.JobResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		if status.Status == "completed" {
+			if status.Execution == nil || !status.Execution.Success {
+				t.Fatalf("invalid completed result: %+v", status)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("job did not complete")
+}
+
+func TestAsyncJobTimeoutValidation(t *testing.T) {
+	s, token := newTestServer(t)
+	w := request(t, s, token, http.MethodPost, "/jobs", api.JobRequest{Command: "Get-Date", Format: api.FormatLines, TimeoutSec: s.cfg.LongCommandTimeoutSec + 1})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_timeout") {
+		t.Fatalf("invalid timeout returned %d: %s", w.Code, w.Body.String())
 	}
 }

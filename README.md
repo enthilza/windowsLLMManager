@@ -2,7 +2,7 @@
 
 Windows LLM Manager is an authenticated HTTPS service for non-interactive administrative PowerShell on Windows 10/11. It includes:
 
-- `agent.exe`: Windows service with one-shot and persistent PowerShell execution;
+- `agent.exe`: Windows service with one-shot, persistent and pollable long-running PowerShell execution;
 - `updater.exe`: signed GitHub Release updater with checksum, embedded cosign verification and rollback;
 - `deploy.cmd`: interactive host-specific provisioning package builder;
 - `release.cmd`: separate universal `agent.exe` signing and GitHub release workflow;
@@ -20,7 +20,9 @@ go test ./...
 python "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_validate.py" .\remote-windows-admin
 ```
 
-The local integration test creates a temporary CA and leaf certificate, starts the agent on `https://127.0.0.1:18443`, validates the pinned CA through the PowerShell 5.1 helper, exercises `/exec`, persistent session state and the kill-switch, then removes its artifacts.
+The local integration test creates a temporary CA and leaf certificate, starts the agent on `https://127.0.0.1:18443`, validates the pinned CA through the PowerShell 5.1 helper, exercises `/exec`, persistent session state, asynchronous jobs and kill-switch cancellation, then removes its artifacts.
+
+Synchronous commands and session calls default to a 120-second limit. Long operations use the asynchronous `/jobs` API through `remote-windows-admin/scripts/ps_job.ps1`; they default to a two-hour process limit, return a job ID immediately and are polled without holding one HTTP request open.
 
 ## Build a provisioning package
 

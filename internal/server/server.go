@@ -19,6 +19,7 @@ import (
 	"windowsllmmanager/internal/api"
 	"windowsllmmanager/internal/audit"
 	"windowsllmmanager/internal/config"
+	jobmanager "windowsllmmanager/internal/jobs"
 	"windowsllmmanager/internal/powershell"
 	"windowsllmmanager/internal/security"
 )
@@ -40,6 +41,7 @@ type Server struct {
 	limiter    *security.RateLimiter
 	audit      *audit.Logger
 	runner     *powershell.Runner
+	jobs       *jobmanager.Manager
 	sessions   *powershell.SessionManager
 	httpServer *http.Server
 	logger     *log.Logger
@@ -57,17 +59,26 @@ func New(cfg config.Config, version string, logger *log.Logger) (*Server, error)
 	if logger == nil {
 		logger = log.Default()
 	}
+	runner := powershell.NewRunner(cfg.MaxOutputBytes)
 	s := &Server{
 		cfg: cfg, version: version, startedAt: time.Now().UTC(), auth: auth,
 		resolver:  security.NewClientIPResolver(cfg.TrustedProxyIP),
 		blocklist: security.NewBlocklist(cfg.AuthFailuresBeforeBlock),
 		limiter:   security.NewRateLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst),
-		audit:     auditLogger, runner: powershell.NewRunner(cfg.MaxOutputBytes),
+		audit:     auditLogger, runner: runner,
 		sessions: powershell.NewSessionManager(cfg.MaxSessions, cfg.MaxOutputBytes, cfg.IdleTimeout()),
 		logger:   logger,
 	}
+	s.jobs = jobmanager.NewManager(runner, cfg.MaxAsyncJobs, cfg.MaxJobResults, cfg.JobRetention())
+	if _, err := os.Stat(cfg.KillSwitchPath); err == nil || !os.IsNotExist(err) {
+		s.jobs.BlockAndCancelAll("kill_switch")
+		s.runner.BlockAndKillAll()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /exec", s.handleExec)
+	mux.HandleFunc("POST /jobs", s.handleJobCreate)
+	mux.HandleFunc("GET /jobs/{id}", s.handleJobGet)
+	mux.HandleFunc("DELETE /jobs/{id}", s.handleJobCancel)
 	mux.HandleFunc("POST /session", s.handleSessionCreate)
 	mux.HandleFunc("POST /session/{id}/exec", s.handleSessionExec)
 	mux.HandleFunc("POST /session/{id}/restart", s.handleSessionRestart)
@@ -124,7 +135,9 @@ func (s *Server) Start() (<-chan error, error) {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.jobs.Close()
 	s.sessions.Close()
+	s.runner.KillAll()
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -179,6 +192,10 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := s.runner.Run(ctx, request.Command, request.Format)
 	s.auditCommand(r, "exec", "", request.Command, result)
+	if errors.Is(err, powershell.ErrBlocked) {
+		writeError(w, http.StatusLocked, "killswitch_active", "execution is disabled; disarm requires local administrator intervention", false, nil)
+		return
+	}
 	if errors.Is(err, powershell.ErrTimedOut) {
 		writeError(w, http.StatusGatewayTimeout, "command_timeout", "command timed out; target state is unknown and must be verified", false, map[string]any{"execution": result})
 		return
@@ -188,6 +205,88 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ExecResponse{RequestID: requestID(r), Execution: result})
+}
+
+func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
+	if s.rejectIfKilled(w) {
+		return
+	}
+	request, ok := s.decodeJobRequest(w, r)
+	if !ok {
+		return
+	}
+	timeoutSec := request.TimeoutSec
+	if timeoutSec == 0 {
+		timeoutSec = s.cfg.LongCommandTimeoutSec
+	}
+	if timeoutSec < 1 || timeoutSec > s.cfg.LongCommandTimeoutSec {
+		writeError(w, http.StatusBadRequest, "invalid_timeout", fmt.Sprintf("timeout_sec must be between 1 and %d", s.cfg.LongCommandTimeoutSec), false, nil)
+		return
+	}
+	sourceIP := clientIP(r)
+	snapshot, err := s.jobs.Submit(request.Command, request.Format, time.Duration(timeoutSec)*time.Second, func(final jobmanager.Snapshot) {
+		result := final.Execution
+		var success *bool
+		var exitCode *int
+		if result != nil {
+			success, exitCode = &result.Success, &result.ExitCode
+		}
+		s.writeAudit(audit.Event{
+			Type: "job_finished", SourceIP: sourceIP, TokenFingerprint: s.auth.Fingerprint(), Mode: "job", Success: success, ExitCode: exitCode,
+			Details: map[string]any{"job_id": final.JobID, "status": final.Status},
+		})
+	})
+	if errors.Is(err, jobmanager.ErrLimit) {
+		writeError(w, http.StatusConflict, "job_limit", "maximum number of asynchronous jobs reached", true, map[string]any{"max_async_jobs": s.cfg.MaxAsyncJobs})
+		return
+	}
+	if errors.Is(err, jobmanager.ErrBlocked) {
+		writeError(w, http.StatusLocked, "killswitch_active", "execution is disabled; disarm requires local administrator intervention", false, nil)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "job_start_failed", err.Error(), true, nil)
+		return
+	}
+	s.writeAudit(audit.Event{
+		Type: "job_submitted", RequestID: requestID(r), SourceIP: clientIP(r), TokenFingerprint: s.auth.Fingerprint(),
+		Mode: "job", Command: request.Command, Details: map[string]any{"job_id": snapshot.JobID, "timeout_sec": timeoutSec},
+	})
+	writeJSON(w, http.StatusAccepted, jobResponse(snapshot))
+}
+
+func (s *Server) handleJobGet(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := s.jobs.Get(r.PathValue("id"))
+	if errors.Is(err, jobmanager.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "job_not_found", "job does not exist or its retained result expired", false, nil)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "job_status_failed", err.Error(), true, nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, jobResponse(snapshot))
+}
+
+func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := s.jobs.Cancel(r.PathValue("id"), "operator")
+	if errors.Is(err, jobmanager.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "job_not_found", "job does not exist or its retained result expired", false, nil)
+		return
+	}
+	if errors.Is(err, jobmanager.ErrNotRunning) {
+		writeError(w, http.StatusConflict, "job_not_running", "job has already reached a terminal state", false, map[string]any{"job": jobResponse(snapshot)})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "job_cancel_failed", err.Error(), true, nil)
+		return
+	}
+	s.writeAudit(audit.Event{
+		Type: "job_cancel_requested", RequestID: requestID(r), SourceIP: clientIP(r), TokenFingerprint: s.auth.Fingerprint(),
+		Mode: "job", Details: map[string]any{"job_id": snapshot.JobID},
+	})
+	writeJSON(w, http.StatusAccepted, jobResponse(snapshot))
 }
 
 func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +379,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.HealthResponse{
 		Status: status, Version: s.version, UptimeSec: int64(time.Since(s.startedAt).Seconds()),
-		OpenSessions: s.sessions.Count(), KillSwitchArmed: killed,
+		OpenSessions: s.sessions.Count(), ActiveJobs: s.jobs.ActiveCount(), KillSwitchArmed: killed,
 	})
 }
 
@@ -313,10 +412,11 @@ func (s *Server) handleKillSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = f.Close()
-	s.runner.KillAll()
+	jobsKilled := s.jobs.BlockAndCancelAll("kill_switch")
+	s.runner.BlockAndKillAll()
 	s.sessions.KillAll()
 	s.writeAudit(audit.Event{Type: "killswitch_armed", RequestID: requestID(r), SourceIP: clientIP(r), TokenFingerprint: s.auth.Fingerprint()})
-	writeJSON(w, http.StatusOK, map[string]any{"armed": true, "sessions_killed": true, "disarm": "local_only"})
+	writeJSON(w, http.StatusOK, map[string]any{"armed": true, "sessions_killed": true, "jobs_killed": jobsKilled, "disarm": "local_only"})
 }
 
 func (s *Server) decodeExecRequest(w http.ResponseWriter, r *http.Request) (api.ExecRequest, bool) {
@@ -347,6 +447,48 @@ func (s *Server) decodeExecRequest(w http.ResponseWriter, r *http.Request) (api.
 		return api.ExecRequest{}, false
 	}
 	return request, true
+}
+
+func (s *Server) decodeJobRequest(w http.ResponseWriter, r *http.Request) (api.JobRequest, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxRequestBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var request api.JobRequest
+	if err := dec.Decode(&request); err != nil {
+		status := http.StatusBadRequest
+		code := "invalid_json"
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			status, code = http.StatusRequestEntityTooLarge, "request_too_large"
+		}
+		writeError(w, status, code, err.Error(), false, nil)
+		return api.JobRequest{}, false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body contains trailing JSON data", false, nil)
+		return api.JobRequest{}, false
+	}
+	if strings.TrimSpace(request.Command) == "" {
+		writeError(w, http.StatusBadRequest, "empty_command", "command must not be empty", false, nil)
+		return api.JobRequest{}, false
+	}
+	if request.Format != api.FormatJSON && request.Format != api.FormatLines {
+		writeError(w, http.StatusBadRequest, "invalid_format", "format must be json_object or lines", false, nil)
+		return api.JobRequest{}, false
+	}
+	return request, true
+}
+
+func jobResponse(snapshot jobmanager.Snapshot) api.JobResponse {
+	response := api.JobResponse{
+		JobID: snapshot.JobID, Status: snapshot.Status, CreatedAt: snapshot.CreatedAt.Format(time.RFC3339Nano),
+		StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano), TimeoutSec: int(snapshot.Timeout / time.Second),
+		Execution: snapshot.Execution, Error: snapshot.Error, CancelReason: snapshot.CancelReason,
+	}
+	if !snapshot.CompletedAt.IsZero() {
+		response.CompletedAt = snapshot.CompletedAt.Format(time.RFC3339Nano)
+	}
+	return response
 }
 
 func (s *Server) rejectIfKilled(w http.ResponseWriter) bool {

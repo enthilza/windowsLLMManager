@@ -21,6 +21,8 @@ Use `scripts/ps_admin.ps1` for health, blocklist, unblock, and explicitly instru
 
 Use `scripts/ps_exec.ps1` for independent checks or actions. Set `-Format json_object` for object-shaped output and `-Format lines` for plain text. Do not add `ConvertTo-Json`; the server applies its fixed Base64 scriptblock wrapper. If unsure, use `lines`.
 
+Use `scripts/ps_job.ps1` for operations that can approach or exceed 120 seconds, including DISM, SFC, Windows Update, MSI/EXE installers, large copies, image servicing, and lengthy scans. Submit once, retain the returned job ID, and poll that exact ID with `-Action Status`. Never submit the same mutation again while its job is `running` or `cancelling`. The default long-job limit is 7200 seconds and the server enforces its configured maximum.
+
 Use `scripts/ps_session.ps1` when later steps genuinely depend on variables, functions, modules, or current directory from earlier steps. No more than five sessions may exist on a host. Always close a session in cleanup. Two exec requests for one session are serialized by the server.
 
 Use `scripts/verify.ps1` for read-only postcondition checks so verification remains visibly distinct from mutation.
@@ -54,7 +56,9 @@ Treat these server-layer refusals as non-command failures:
 
 Treat `execution.success: false` in a successful HTTP response as a command failure. Diagnose from `exit_code` and `stderr`, then verify state.
 
-On `504 command_timeout`, state is unknown. Run a read-only check before any retry and never blindly repeat a non-idempotent action. In session mode the timed-out process is killed and restarted, so all session state is lost.
+On `504 command_timeout`, the synchronous PowerShell process tree was killed. Do not claim that the HTTP request or its PowerShell process is still running. Because Windows servicing can delegate work to system services outside that tree, target state is nevertheless unknown; inspect state read-only before deciding and never blindly repeat a non-idempotent action. In session mode the session is also restarted and all state is lost.
+
+For asynchronous jobs, only `completed`, `failed`, `timed_out`, and `cancelled` are terminal. Continue polling `running` or `cancelling`. A completed job can still contain `execution.success: false`; treat that as command failure. If a job disappears with `404 job_not_found`, do not repeat its mutation merely because the retained result expired.
 
 On `409 session_process_exited`, the command called `exit` or otherwise killed PowerShell. The server attempts to respawn it under the same ID, but prior session state is lost. Report this before continuing.
 

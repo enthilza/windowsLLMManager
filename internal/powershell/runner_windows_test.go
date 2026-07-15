@@ -156,3 +156,13 @@ func TestRunnerKillAllStopsActiveOneShot(t *testing.T) {
 		t.Fatal("KillAll did not stop the active one-shot command")
 	}
 }
+
+func TestRunnerBlockRejectsNewOneShot(t *testing.T) {
+	runner := NewRunner(1024 * 1024)
+	runner.BlockAndKillAll()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := runner.Run(ctx, "Get-Date", api.FormatLines); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("expected blocked error, got %v", err)
+	}
+}

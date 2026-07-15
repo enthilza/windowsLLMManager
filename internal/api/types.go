@@ -23,6 +23,24 @@ type ExecRequest struct {
 	Format  string `json:"format"`
 }
 
+type JobRequest struct {
+	Command    string `json:"command"`
+	Format     string `json:"format"`
+	TimeoutSec int    `json:"timeout_sec,omitempty"`
+}
+
+type JobResponse struct {
+	JobID        string           `json:"job_id"`
+	Status       string           `json:"status"`
+	CreatedAt    string           `json:"created_at"`
+	StartedAt    string           `json:"started_at"`
+	CompletedAt  string           `json:"completed_at,omitempty"`
+	TimeoutSec   int              `json:"timeout_sec"`
+	Execution    *ExecutionResult `json:"execution,omitempty"`
+	Error        string           `json:"error,omitempty"`
+	CancelReason string           `json:"cancel_reason,omitempty"`
+}
+
 type ExecResponse struct {
 	RequestID string          `json:"request_id"`
 	Execution ExecutionResult `json:"execution"`
@@ -59,6 +77,7 @@ type HealthResponse struct {
 	Version         string `json:"version"`
 	UptimeSec       int64  `json:"uptime_sec"`
 	OpenSessions    int    `json:"open_sessions"`
+	ActiveJobs      int    `json:"active_jobs"`
 	KillSwitchArmed bool   `json:"kill_switch_armed"`
 }
 

@@ -23,6 +23,10 @@ type Config struct {
 	MaxSessions             int    `json:"max_sessions"`
 	IdleSessionTimeoutSec   int    `json:"idle_session_timeout_sec"`
 	CommandTimeoutSec       int    `json:"command_timeout_sec"`
+	LongCommandTimeoutSec   int    `json:"long_command_timeout_sec"`
+	MaxAsyncJobs            int    `json:"max_async_jobs"`
+	MaxJobResults           int    `json:"max_job_results"`
+	JobRetentionSec         int    `json:"job_retention_sec"`
 	MaxOutputBytes          int    `json:"max_output_bytes"`
 	MaxRequestBytes         int64  `json:"max_request_bytes"`
 	RateLimitPerSec         int    `json:"rate_limit_per_sec"`
@@ -42,6 +46,10 @@ func Default(baseDir string) Config {
 		MaxSessions:             5,
 		IdleSessionTimeoutSec:   1800,
 		CommandTimeoutSec:       120,
+		LongCommandTimeoutSec:   7200,
+		MaxAsyncJobs:            4,
+		MaxJobResults:           20,
+		JobRetentionSec:         3600,
 		MaxOutputBytes:          4 * 1024 * 1024,
 		MaxRequestBytes:         1024 * 1024,
 		RateLimitPerSec:         10,
@@ -88,8 +96,11 @@ func (c Config) Validate() error {
 	if c.MaxSessions < 1 || c.MaxSessions > 100 {
 		return errors.New("max_sessions must be between 1 and 100")
 	}
-	if c.IdleSessionTimeoutSec < 30 || c.CommandTimeoutSec < 1 {
-		return errors.New("idle_session_timeout_sec must be >= 30 and command_timeout_sec >= 1")
+	if c.IdleSessionTimeoutSec < 30 || c.CommandTimeoutSec < 1 || c.LongCommandTimeoutSec < c.CommandTimeoutSec {
+		return errors.New("idle_session_timeout_sec must be >= 30, command_timeout_sec >= 1, and long_command_timeout_sec >= command_timeout_sec")
+	}
+	if c.MaxAsyncJobs < 1 || c.MaxAsyncJobs > 100 || c.MaxJobResults < c.MaxAsyncJobs || c.MaxJobResults > 1000 || c.JobRetentionSec < 60 {
+		return errors.New("max_async_jobs must be between 1 and 100, max_job_results between max_async_jobs and 1000, and job_retention_sec >= 60")
 	}
 	if c.MaxOutputBytes < 1024 || c.MaxRequestBytes < 1024 {
 		return errors.New("max_output_bytes and max_request_bytes must be >= 1024")
@@ -105,6 +116,12 @@ func (c Config) Validate() error {
 
 func (c Config) CommandTimeout() time.Duration {
 	return time.Duration(c.CommandTimeoutSec) * time.Second
+}
+func (c Config) LongCommandTimeout() time.Duration {
+	return time.Duration(c.LongCommandTimeoutSec) * time.Second
+}
+func (c Config) JobRetention() time.Duration {
+	return time.Duration(c.JobRetentionSec) * time.Second
 }
 func (c Config) IdleTimeout() time.Duration {
 	return time.Duration(c.IdleSessionTimeoutSec) * time.Second
